@@ -21,11 +21,13 @@ public partial class MiniWindow : Window
 
     private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        DragMove();
-    }
+        if (e.ClickCount >= 2)
+        {
+            RestoreRequested?.Invoke(this, EventArgs.Empty);
+            e.Handled = true;
+            return;
+        }
 
-    private void Restore_Click(object sender, RoutedEventArgs e)
-    {
-        RestoreRequested?.Invoke(this, EventArgs.Empty);
+        DragMove();
     }
 }

@@ -193,9 +193,18 @@ public class RecordingService : IRecordingService
         evt.WindowProcessName = window.ProcessName;
         evt.RelativeX = evt.X - window.Left;
         evt.RelativeY = evt.Y - window.Top;
+        evt.RecordedWindowWidth = window.Width;
+        evt.RecordedWindowHeight = window.Height;
+        evt.ClientRelativeX = evt.X - window.ClientLeft;
+        evt.ClientRelativeY = evt.Y - window.ClientTop;
+        evt.RecordedClientWidth = window.ClientWidth;
+        evt.RecordedClientHeight = window.ClientHeight;
         evt.UseWindowRelativeCoordinates =
             evt.RelativeX >= 0 && evt.RelativeX <= window.Width &&
             evt.RelativeY >= 0 && evt.RelativeY <= window.Height;
+        evt.UseWindowClientCoordinates =
+            evt.ClientRelativeX >= 0 && evt.ClientRelativeX <= window.ClientWidth &&
+            evt.ClientRelativeY >= 0 && evt.ClientRelativeY <= window.ClientHeight;
 
         return evt;
     }

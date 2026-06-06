@@ -4,7 +4,18 @@ using AutoMacro.Models;
 
 namespace AutoMacro.Services;
 
-public sealed record WindowSnapshot(IntPtr Handle, string Title, string ProcessName, int Left, int Top, int Width, int Height);
+public sealed record WindowSnapshot(
+    IntPtr Handle,
+    string Title,
+    string ProcessName,
+    int Left,
+    int Top,
+    int Width,
+    int Height,
+    int ClientLeft,
+    int ClientTop,
+    int ClientWidth,
+    int ClientHeight);
 
 public class WindowAutomationService : IWindowAutomationService
 {
@@ -21,6 +32,12 @@ public class WindowAutomationService : IWindowAutomationService
 
     [DllImport("user32.dll")]
     private static extern bool GetWindowRect(IntPtr hWnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetClientRect(IntPtr hWnd, out Rect rect);
+
+    [DllImport("user32.dll")]
+    private static extern bool ClientToScreen(IntPtr hWnd, ref Point point);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
@@ -43,6 +60,13 @@ public class WindowAutomationService : IWindowAutomationService
         public int Top;
         public int Right;
         public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Point
+    {
+        public int X;
+        public int Y;
     }
 
     public WindowAutomationService(IRunLogger logger)
@@ -69,6 +93,27 @@ public class WindowAutomationService : IWindowAutomationService
         {
             _logger.Warn("Window", $"未找到录制窗口，使用绝对坐标: \"{evt.WindowTitle}\" ({evt.X}, {evt.Y})");
             return false;
+        }
+
+        if (evt.UseWindowClientCoordinates &&
+            evt.RecordedClientWidth > 0 &&
+            evt.RecordedClientHeight > 0 &&
+            snapshot.ClientWidth > 0 &&
+            snapshot.ClientHeight > 0)
+        {
+            x = snapshot.ClientLeft + ResolveHorizontalCoordinate(evt.ClientRelativeX, evt.RecordedClientWidth, snapshot.ClientWidth);
+            y = snapshot.ClientTop + ResolveVerticalCoordinate(evt.ClientRelativeY, evt.RecordedClientHeight, snapshot.ClientHeight);
+            return true;
+        }
+
+        if (evt.RecordedWindowWidth > 0 &&
+            evt.RecordedWindowHeight > 0 &&
+            snapshot.Width > 0 &&
+            snapshot.Height > 0)
+        {
+            x = snapshot.Left + ResolveHorizontalCoordinate(evt.RelativeX, evt.RecordedWindowWidth, snapshot.Width);
+            y = snapshot.Top + ResolveVerticalCoordinate(evt.RelativeY, evt.RecordedWindowHeight, snapshot.Height);
+            return true;
         }
 
         x = snapshot.Left + evt.RelativeX;
@@ -167,6 +212,22 @@ public class WindowAutomationService : IWindowAutomationService
         {
         }
 
+        var clientLeft = rect.Left;
+        var clientTop = rect.Top;
+        var clientWidth = Math.Max(0, rect.Right - rect.Left);
+        var clientHeight = Math.Max(0, rect.Bottom - rect.Top);
+        if (GetClientRect(handle, out var clientRect))
+        {
+            var clientOrigin = new Point();
+            if (ClientToScreen(handle, ref clientOrigin))
+            {
+                clientLeft = clientOrigin.X;
+                clientTop = clientOrigin.Y;
+                clientWidth = Math.Max(0, clientRect.Right - clientRect.Left);
+                clientHeight = Math.Max(0, clientRect.Bottom - clientRect.Top);
+            }
+        }
+
         return new WindowSnapshot(
             handle,
             title,
@@ -174,7 +235,57 @@ public class WindowAutomationService : IWindowAutomationService
             rect.Left,
             rect.Top,
             Math.Max(0, rect.Right - rect.Left),
-            Math.Max(0, rect.Bottom - rect.Top));
+            Math.Max(0, rect.Bottom - rect.Top),
+            clientLeft,
+            clientTop,
+            clientWidth,
+            clientHeight);
+    }
+
+    private static int ResolveHorizontalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
+    {
+        if (recordedSize <= 0)
+            return recordedCoordinate;
+
+        var endDistance = recordedSize - recordedCoordinate;
+        if (endDistance <= GetHorizontalRightBand(recordedSize))
+            return ClampCoordinate(currentSize - endDistance, currentSize);
+
+        return ClampCoordinate(recordedCoordinate, currentSize);
+    }
+
+    private static int ResolveVerticalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
+    {
+        if (recordedSize <= 0)
+            return recordedCoordinate;
+
+        var startDistance = recordedCoordinate;
+        var endDistance = recordedSize - recordedCoordinate;
+        var edgeBand = GetEdgeBand(recordedSize);
+
+        if (startDistance <= edgeBand && endDistance > edgeBand)
+            return ClampCoordinate(startDistance, currentSize);
+
+        if (endDistance <= edgeBand && startDistance > edgeBand)
+            return ClampCoordinate(currentSize - endDistance, currentSize);
+
+        var ratio = recordedCoordinate / (double)recordedSize;
+        return ClampCoordinate((int)Math.Round(Math.Clamp(ratio, 0, 1) * currentSize), currentSize);
+    }
+
+    private static int GetHorizontalRightBand(int recordedSize)
+    {
+        return (int)Math.Round(Math.Clamp(recordedSize * 0.33, 160, 460));
+    }
+
+    private static int GetEdgeBand(int recordedSize)
+    {
+        return (int)Math.Round(Math.Clamp(recordedSize * 0.28, 100, 320));
+    }
+
+    private static int ClampCoordinate(int coordinate, int currentSize)
+    {
+        return Math.Clamp(coordinate, 0, Math.Max(0, currentSize));
     }
 
     private static string GetTitle(IntPtr handle)

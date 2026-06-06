@@ -27,6 +27,7 @@ public class PlaybackService : IPlaybackService
     public event EventHandler? PlaybackStarted;
     public event EventHandler? PlaybackStopped;
     public event EventHandler? LoopChanged;
+    public event EventHandler<PlaybackStepChangedEventArgs>? StepChanged;
 
     public PlaybackService(
         IClipboardInjector clipboardInjector,
@@ -92,11 +93,14 @@ public class PlaybackService : IPlaybackService
                 CurrentLoop = loop + 1;
                 LoopChanged?.Invoke(this, EventArgs.Empty);
 
-                foreach (var evt in filtered)
+                for (var stepIndex = 0; stepIndex < filtered.Count; stepIndex++)
                 {
+                    var evt = filtered[stepIndex];
                     _cts.Token.ThrowIfCancellationRequested();
                     if (IsPaused && _pauseTcs is not null)
                         await _pauseTcs.Task; // 异步等待，不阻塞 UI
+
+                    StepChanged?.Invoke(this, new PlaybackStepChangedEventArgs(evt, stepIndex + 1, filtered.Count, CurrentLoop));
 
                     if (evt.EventType != InputEventType.Delay && evt.DeltaMs > 0)
                         await DelayAsync(evt.DeltaMs, _cts.Token);
@@ -162,6 +166,10 @@ public class PlaybackService : IPlaybackService
 
             case InputEventType.KeyUp:
                 _simulator.SimulateKeyRelease((KeyCode)evt.KeyCode);
+                break;
+
+            case InputEventType.KeyCombo:
+                await SimulateKeyComboWithTimeoutAsync(evt, cancellationToken);
                 break;
 
             case InputEventType.MouseDown:
@@ -349,6 +357,65 @@ public class PlaybackService : IPlaybackService
             : (evt.X, evt.Y);
     }
 
+    private async Task SimulateKeyComboAsync(string? comboText, CancellationToken cancellationToken)
+    {
+        var keys = BuildKeyComboKeys(comboText);
+        if (keys.Count == 0)
+        {
+            _logger.Error("Playback", $"按键操作无效: {comboText}");
+            _cts?.Cancel();
+            return;
+        }
+
+        foreach (var key in keys)
+        {
+            _simulator.SimulateKeyPress(key);
+            await Task.Delay(35, cancellationToken);
+        }
+
+        for (var i = keys.Count - 1; i >= 0; i--)
+        {
+            _simulator.SimulateKeyRelease(keys[i]);
+            await Task.Delay(35, cancellationToken);
+        }
+
+        _logger.Info("Playback", $"按键操作完成: {comboText}");
+    }
+
+    private async Task SimulateKeyComboWithTimeoutAsync(InputEvent evt, CancellationToken cancellationToken)
+    {
+        var timeoutMs = Math.Max(1000, evt.TimeoutMs <= 0 ? 10000 : evt.TimeoutMs);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeoutMs);
+
+        try
+        {
+            await SimulateKeyComboAsync(evt.TextPattern, timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.Error("Playback", $"按键操作超时: {evt.TextPattern}, timeout={timeoutMs}ms");
+            _cts?.Cancel();
+        }
+    }
+
+    private static List<KeyCode> BuildKeyComboKeys(string? comboText)
+    {
+        if (string.IsNullOrWhiteSpace(comboText))
+            return new List<KeyCode>();
+
+        var binding = HotkeySettings.ParseHotkey(comboText);
+        if (!binding.IsValid)
+            return new List<KeyCode>();
+
+        var keys = new List<KeyCode>();
+        if (binding.Ctrl) keys.Add(KeyCode.VcLeftControl);
+        if (binding.Shift) keys.Add(KeyCode.VcLeftShift);
+        if (binding.Alt) keys.Add(KeyCode.VcLeftAlt);
+        keys.Add(binding.Key);
+        return keys;
+    }
+
     private static double NormalizePlaybackSpeed(double playbackSpeed)
     {
         if (double.IsNaN(playbackSpeed) || double.IsInfinity(playbackSpeed))
@@ -383,6 +450,13 @@ public class PlaybackService : IPlaybackService
             UseWindowRelativeCoordinates = evt.UseWindowRelativeCoordinates,
             RelativeX = evt.RelativeX,
             RelativeY = evt.RelativeY,
+            RecordedWindowWidth = evt.RecordedWindowWidth,
+            RecordedWindowHeight = evt.RecordedWindowHeight,
+            UseWindowClientCoordinates = evt.UseWindowClientCoordinates,
+            ClientRelativeX = evt.ClientRelativeX,
+            ClientRelativeY = evt.ClientRelativeY,
+            RecordedClientWidth = evt.RecordedClientWidth,
+            RecordedClientHeight = evt.RecordedClientHeight,
             WindowTitle = evt.WindowTitle,
             WindowProcessName = evt.WindowProcessName,
             ImagePath = evt.ImagePath,

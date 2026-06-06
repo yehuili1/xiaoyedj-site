@@ -39,12 +39,20 @@ public class ImageRecognitionService : IImageRecognitionService
 
         using var templateSource = new Bitmap(imagePath);
         using var template = CloneAs24Bpp(templateSource);
+        var effectiveThreshold = GetEffectiveThreshold(normalizedThreshold, template.Width, template.Height);
+        if (effectiveThreshold < normalizedThreshold)
+        {
+            _logger.Info(
+                "Image",
+                $"小截图自动放宽匹配: {Path.GetFileName(imagePath)}, size={template.Width}x{template.Height}, threshold={normalizedThreshold:0.00}->{effectiveThreshold:0.00}");
+        }
+
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
             var capture = CaptureScreen();
             using var screen = capture.Bitmap;
-            var result = FindInBitmap(screen, template, normalizedThreshold, capture.Left, capture.Top);
+            var result = FindInBitmap(screen, template, effectiveThreshold, capture.Left, capture.Top);
             if (result.Found)
             {
                 _logger.Info("Image", $"找到图片: {Path.GetFileName(imagePath)}, score={result.Score:0.000}, x={result.X}, y={result.Y}");
@@ -63,6 +71,18 @@ public class ImageRecognitionService : IImageRecognitionService
 
         _logger.Error("Image", $"等待图片超时: {Path.GetFileName(imagePath)}, bestScore={bestScore:0.000}", captureScreenshot: true);
         return (false, bestX, bestY, bestScore);
+    }
+
+    private static double GetEffectiveThreshold(double threshold, int templateWidth, int templateHeight)
+    {
+        var area = templateWidth * templateHeight;
+        if (area <= 2500 || templateHeight <= 32)
+            return Math.Min(threshold, 0.80);
+
+        if (area <= 6000 || templateHeight <= 48)
+            return Math.Min(threshold, 0.86);
+
+        return threshold;
     }
 
     private (bool Found, int X, int Y, double Score) FindInBitmap(

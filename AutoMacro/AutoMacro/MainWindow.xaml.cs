@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Windows;
 using Application = System.Windows.Application;
+using AutoMacro.Models;
 using AutoMacro.Services;
 using AutoMacro.ViewModels;
 using Wpf.Ui.Controls;
@@ -13,8 +14,7 @@ public partial class MainWindow : FluentWindow
     private readonly TrayIconService _trayIcon;
     private Views.MiniWindow? _miniWindow;
 
-    // 关闭行为记忆：null=未选择, true=最小化到托盘, false=退出
-    private bool? _rememberedCloseAction;
+    private AppSettings _appSettings = AppSettings.Load();
     private bool _forceExit;
 
     public MainWindow(MainViewModel viewModel)
@@ -22,12 +22,6 @@ public partial class MainWindow : FluentWindow
         ViewModel = viewModel;
         DataContext = viewModel;
         InitializeComponent();
-
-        ProjectTree.SelectedItemChanged += (_, e) =>
-        {
-            if (e.NewValue is TreeNodeViewModel node)
-                ViewModel.SelectedTreeNode = node;
-        };
 
         // 托盘图标
         _trayIcon = new TrayIconService();
@@ -52,14 +46,17 @@ public partial class MainWindow : FluentWindow
             return;
         }
 
-        // 如果用户之前选了"不再提示"
-        if (_rememberedCloseAction.HasValue)
+        if (_appSettings.CloseBehavior == CloseBehavior.MinimizeToTray)
         {
             e.Cancel = true;
-            if (_rememberedCloseAction.Value)
-                MinimizeToTray();
-            else
-                ForceExit();
+            MinimizeToTray();
+            return;
+        }
+
+        if (_appSettings.CloseBehavior == CloseBehavior.ExitApp)
+        {
+            e.Cancel = true;
+            ForceExit();
             return;
         }
 
@@ -69,7 +66,12 @@ public partial class MainWindow : FluentWindow
         if (dialog.ShowDialog() == true)
         {
             if (dialog.RememberChoice)
-                _rememberedCloseAction = dialog.MinimizeToTray;
+            {
+                _appSettings.CloseBehavior = dialog.MinimizeToTray
+                    ? CloseBehavior.MinimizeToTray
+                    : CloseBehavior.ExitApp;
+                _appSettings.Save();
+            }
 
             if (dialog.MinimizeToTray)
                 MinimizeToTray();
@@ -129,5 +131,36 @@ public partial class MainWindow : FluentWindow
     private void MiniMode_Click(object sender, RoutedEventArgs e)
     {
         SwitchToMiniMode();
+    }
+
+    private void AppSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Views.AppSettingsDialog(_appSettings)
+        {
+            Owner = this
+        };
+
+        if (dialog.ShowDialog() != true)
+            return;
+
+        _appSettings = dialog.Settings;
+        try
+        {
+            _appSettings.ApplyStartupSetting();
+            _appSettings.Save();
+            System.Windows.MessageBox.Show(
+                "软件设置已保存。",
+                "设置成功",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(
+                ex.Message,
+                "设置保存失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
     }
 }

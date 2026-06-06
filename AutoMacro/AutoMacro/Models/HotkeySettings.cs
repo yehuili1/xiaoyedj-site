@@ -25,7 +25,7 @@ public class HotkeySettings
     /// </summary>
     public Dictionary<string, string> ProfileHotkeys { get; set; } = new();
 
-    private static readonly string SettingsPath =
+    public static readonly string SettingsFilePath =
         Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory, "hotkey_settings.json");
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -36,19 +36,19 @@ public class HotkeySettings
     public void Save()
     {
         var json = JsonSerializer.Serialize(this, JsonOptions);
-        File.WriteAllText(SettingsPath, json);
+        File.WriteAllText(SettingsFilePath, json);
     }
 
     public static HotkeySettings Load()
     {
-        if (!File.Exists(SettingsPath))
+        if (!File.Exists(SettingsFilePath))
         {
             var defaults = new HotkeySettings();
             defaults.Save();
             return defaults;
         }
 
-        var json = File.ReadAllText(SettingsPath);
+        var json = File.ReadAllText(SettingsFilePath);
         return JsonSerializer.Deserialize<HotkeySettings>(json, JsonOptions) ?? new HotkeySettings();
     }
 
@@ -93,8 +93,15 @@ public class HotkeySettings
             "NUM/" => KeyCode.VcNumPadDivide,
 
             // 导航 / 特殊
+            "ESC" => KeyCode.VcEscape,
+            "ESCAPE" => KeyCode.VcEscape,
+            "TAB" => KeyCode.VcTab,
+            "ENTER" => KeyCode.VcEnter,
+            "RETURN" => KeyCode.VcEnter,
             "SPACE" => KeyCode.VcSpace,
             "BACKSPACE" => KeyCode.VcBackspace,
+            "CAPSLOCK" => KeyCode.VcCapsLock,
+            "CAPS LOCK" => KeyCode.VcCapsLock,
             "DELETE" => KeyCode.VcDelete,
             "PAUSE" => KeyCode.VcPause,
             "SCROLLLOCK" => KeyCode.VcScrollLock,

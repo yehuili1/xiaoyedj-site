@@ -44,8 +44,6 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
                     <!-- Profile Selector -->
@@ -143,13 +141,13 @@
                         </Grid.ColumnDefinitions>
                         <ui:Button Grid.Column="0"
                                    Icon="{ui:SymbolIcon ArrowExportUp24}"
-                                   Content="导出方案"
+                                   Content="导出全局"
                                    Command="{Binding ExportProfileCommand}"
                                    HorizontalAlignment="Stretch"
                                    Margin="0,0,2,0" />
                         <ui:Button Grid.Column="1"
                                    Icon="{ui:SymbolIcon ArrowImport24}"
-                                   Content="导入方案"
+                                   Content="导入全局"
                                    Command="{Binding ImportProfileCommand}"
                                    HorizontalAlignment="Stretch"
                                    Margin="2,0,0,0" />
@@ -157,6 +155,7 @@
 
                     <Grid Grid.Row="4" Margin="0,0,0,8">
                         <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
@@ -167,6 +166,12 @@
                                    HorizontalAlignment="Stretch"
                                    Margin="0,0,2,0" />
                         <ui:Button Grid.Column="1"
+                                   Icon="{ui:SymbolIcon Options24}"
+                                   Content="设置"
+                                   Click="AppSettings_Click"
+                                   HorizontalAlignment="Stretch"
+                                   Margin="2,0,2,0" />
+                        <ui:Button Grid.Column="2"
                                    Icon="{ui:SymbolIcon DocumentBulletList24}"
                                    Content="日志"
                                    Command="{Binding OpenLogFolderCommand}"
@@ -174,38 +179,6 @@
                                    Margin="2,0,0,0" />
                     </Grid>
 
-                    <Separator Grid.Row="5" Margin="0,0,0,8" />
-
-                    <!-- TreeView: Profile Resources -->
-                    <TreeView Grid.Row="6"
-                              x:Name="ProjectTree"
-                              ItemsSource="{Binding TreeNodes}"
-                              BorderThickness="0"
-                              Background="Transparent"
-                              Padding="0">
-                        <TreeView.ItemContainerStyle>
-                            <Style TargetType="TreeViewItem"
-                                   BasedOn="{StaticResource {x:Type TreeViewItem}}">
-                                <Setter Property="IsExpanded"
-                                        Value="{Binding IsExpanded, Mode=TwoWay}" />
-                                <Setter Property="IsSelected"
-                                        Value="{Binding IsSelected, Mode=TwoWay}" />
-                                <Setter Property="Padding" Value="4,2" />
-                            </Style>
-                        </TreeView.ItemContainerStyle>
-                        <TreeView.ItemTemplate>
-                            <HierarchicalDataTemplate ItemsSource="{Binding Children}">
-                                <StackPanel Orientation="Horizontal" Margin="2,4">
-                                    <ui:SymbolIcon Symbol="{Binding IconGlyph}"
-                                                   FontSize="16"
-                                                   Margin="0,0,8,0" />
-                                    <TextBlock Text="{Binding Name}"
-                                               VerticalAlignment="Center"
-                                               FontSize="13" />
-                                </StackPanel>
-                            </HierarchicalDataTemplate>
-                        </TreeView.ItemTemplate>
-                    </TreeView>
                 </Grid>
             </Border>
 
@@ -216,30 +189,9 @@
                           VerticalAlignment="Stretch"
                           Background="Transparent" />
 
-            <!-- ===== CENTER: Work Area (Hidden Tab Headers) ===== -->
-            <TabControl Grid.Column="2"
-                        x:Name="CenterTabControl"
-                        SelectedIndex="{Binding ActiveTabIndex}"
-                        BorderThickness="0"
-                        Background="Transparent"
-                        Padding="0">
-                <TabControl.ItemContainerStyle>
-                    <Style TargetType="TabItem">
-                        <Setter Property="Visibility" Value="Collapsed" />
-                        <Setter Property="Height" Value="0" />
-                    </Style>
-                </TabControl.ItemContainerStyle>
-
-                <!-- Tab 0: Action List Editor -->
-                <TabItem>
-                    <views:ActionListView DataContext="{Binding ActionListVm}" />
-                </TabItem>
-
-                <!-- Tab 1: Variable Table Editor -->
-                <TabItem>
-                    <views:VariableEditorView DataContext="{Binding VariableEditorVm}" />
-                </TabItem>
-            </TabControl>
+            <!-- ===== CENTER: Action List Editor ===== -->
+            <views:ActionListView Grid.Column="2"
+                                  DataContext="{Binding ActionListVm}" />
         </Grid>
 
         <!-- ===== ROW 2: BOTTOM CONTROL & STATUS BAR ===== -->

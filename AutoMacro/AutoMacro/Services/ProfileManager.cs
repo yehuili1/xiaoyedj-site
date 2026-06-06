@@ -8,10 +8,20 @@ namespace AutoMacro.Services;
 
 public class ProfileManager : IProfileManager
 {
+    private const string ProfilesFolderName = "Profiles";
+    private const string HotkeySettingsFileName = "hotkey_settings.json";
+    private const string GlobalConfigManifestFileName = "global_config.json";
+
     private sealed class ProfileMetadata
     {
         public int LoopCount { get; set; } = 1;
         public double PlaybackSpeed { get; set; } = 1.0;
+    }
+
+    private sealed class GlobalConfigManifest
+    {
+        public string PackageType { get; set; } = "AutoMacroGlobalConfig";
+        public DateTime ExportedAt { get; set; } = DateTime.Now;
     }
 
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -26,7 +36,7 @@ public class ProfileManager : IProfileManager
 
     public ProfileManager()
     {
-        _profilesRoot = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory, "Profiles");
+        _profilesRoot = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory, ProfilesFolderName);
         if (!Directory.Exists(_profilesRoot))
             Directory.CreateDirectory(_profilesRoot);
     }
@@ -212,6 +222,106 @@ public class ProfileManager : IProfileManager
         return profile;
     }
 
+    public void ExportGlobalConfig(string zipPath)
+    {
+        if (File.Exists(zipPath))
+            File.Delete(zipPath);
+
+        var parent = Path.GetDirectoryName(zipPath);
+        if (!string.IsNullOrWhiteSpace(parent))
+            Directory.CreateDirectory(parent);
+
+        if (!File.Exists(HotkeySettings.SettingsFilePath))
+            new HotkeySettings().Save();
+
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+
+            var manifest = JsonSerializer.Serialize(new GlobalConfigManifest(), JsonOptions);
+            File.WriteAllText(Path.Combine(tempDir, GlobalConfigManifestFileName), manifest);
+
+            var tempProfilesRoot = Path.Combine(tempDir, ProfilesFolderName);
+            if (Directory.Exists(_profilesRoot))
+            {
+                CopyDirectory(_profilesRoot, tempProfilesRoot, overwrite: true);
+                BundleReferencedImagesForExport(_profilesRoot, tempProfilesRoot);
+            }
+            else
+            {
+                Directory.CreateDirectory(tempProfilesRoot);
+            }
+
+            File.Copy(
+                HotkeySettings.SettingsFilePath,
+                Path.Combine(tempDir, HotkeySettingsFileName),
+                overwrite: true);
+
+            ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
+
+    public void ImportGlobalConfig(string zipPath)
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        try
+        {
+            ZipFile.ExtractToDirectory(zipPath, tempDir);
+            var root = FindGlobalConfigRoot(tempDir);
+            var sourceProfilesRoot = Path.Combine(root, ProfilesFolderName);
+            var sourceHotkeySettings = Path.Combine(root, HotkeySettingsFileName);
+
+            if (!Directory.Exists(sourceProfilesRoot))
+                throw new InvalidOperationException("这个压缩包里没有找到 Profiles 文件夹，不是完整的全局配置包。");
+
+            var backupProfilesRoot = Path.Combine(tempDir, "current_Profiles_backup");
+            var backupHotkeySettings = Path.Combine(tempDir, "current_hotkey_settings_backup.json");
+
+            if (Directory.Exists(_profilesRoot))
+                Directory.Move(_profilesRoot, backupProfilesRoot);
+
+            if (File.Exists(HotkeySettings.SettingsFilePath))
+                File.Copy(HotkeySettings.SettingsFilePath, backupHotkeySettings, overwrite: true);
+
+            try
+            {
+                CopyDirectory(sourceProfilesRoot, _profilesRoot, overwrite: true);
+
+                if (File.Exists(sourceHotkeySettings))
+                {
+                    File.Copy(
+                        sourceHotkeySettings,
+                        HotkeySettings.SettingsFilePath,
+                        overwrite: true);
+                }
+            }
+            catch
+            {
+                if (Directory.Exists(_profilesRoot))
+                    Directory.Delete(_profilesRoot, true);
+
+                if (Directory.Exists(backupProfilesRoot))
+                    Directory.Move(backupProfilesRoot, _profilesRoot);
+
+                if (File.Exists(backupHotkeySettings))
+                    File.Copy(backupHotkeySettings, HotkeySettings.SettingsFilePath, overwrite: true);
+
+                throw;
+            }
+
+            LoadAllProfiles();
+        }
+        finally
+        {
+            try { Directory.Delete(tempDir, true); } catch { }
+        }
+    }
+
     private void LoadProfileMetadata(RecordProfile profile)
     {
         profile.LoopCount = 1;
@@ -278,6 +388,13 @@ public class ProfileManager : IProfileManager
             UseWindowRelativeCoordinates = evt.UseWindowRelativeCoordinates,
             RelativeX = evt.RelativeX,
             RelativeY = evt.RelativeY,
+            RecordedWindowWidth = evt.RecordedWindowWidth,
+            RecordedWindowHeight = evt.RecordedWindowHeight,
+            UseWindowClientCoordinates = evt.UseWindowClientCoordinates,
+            ClientRelativeX = evt.ClientRelativeX,
+            ClientRelativeY = evt.ClientRelativeY,
+            RecordedClientWidth = evt.RecordedClientWidth,
+            RecordedClientHeight = evt.RecordedClientHeight,
             WindowTitle = evt.WindowTitle,
             WindowProcessName = evt.WindowProcessName,
             ImagePath = ToProfileRelativePath(profile, evt.ImagePath),
@@ -308,14 +425,157 @@ public class ProfileManager : IProfileManager
             : relative;
     }
 
-    private static void CopyDirectory(string source, string destination)
+    private static string FindGlobalConfigRoot(string tempDir)
+    {
+        if (ContainsGlobalConfigFiles(tempDir))
+            return tempDir;
+
+        var subDirs = Directory.GetDirectories(tempDir);
+        if (subDirs.Length == 1 && ContainsGlobalConfigFiles(subDirs[0]))
+            return subDirs[0];
+
+        throw new InvalidOperationException("这个压缩包不是全局配置包。请确认它是从“导出全局配置”生成的。");
+    }
+
+    private static bool ContainsGlobalConfigFiles(string dir)
+    {
+        return Directory.Exists(Path.Combine(dir, ProfilesFolderName)) ||
+               File.Exists(Path.Combine(dir, HotkeySettingsFileName)) ||
+               File.Exists(Path.Combine(dir, GlobalConfigManifestFileName));
+    }
+
+    private static void BundleReferencedImagesForExport(string sourceProfilesRoot, string exportProfilesRoot)
+    {
+        foreach (var sourceProfileDir in Directory.GetDirectories(sourceProfilesRoot))
+        {
+            var profileName = Path.GetFileName(sourceProfileDir);
+            var exportProfileDir = Path.Combine(exportProfilesRoot, profileName);
+            BundleReferencedImagesForProfile(sourceProfileDir, exportProfileDir);
+        }
+    }
+
+    private static void BundleReferencedImagesForProfile(string sourceProfileDir, string exportProfileDir)
+    {
+        var recordPath = Path.Combine(exportProfileDir, "record.json");
+        if (!File.Exists(recordPath))
+            return;
+
+        try
+        {
+            var json = File.ReadAllText(recordPath);
+            var events = JsonSerializer.Deserialize<List<InputEvent>>(json, JsonOptions);
+            if (events is null || events.Count == 0)
+                return;
+
+            var copiedExternalImages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var changed = false;
+
+            foreach (var evt in events)
+            {
+                var bundledPath = BundleImageForExport(
+                    evt.ImagePath,
+                    sourceProfileDir,
+                    exportProfileDir,
+                    copiedExternalImages);
+
+                if (bundledPath is null || evt.ImagePath == bundledPath)
+                    continue;
+
+                evt.ImagePath = bundledPath;
+                changed = true;
+            }
+
+            if (!changed)
+                return;
+
+            File.WriteAllText(recordPath, JsonSerializer.Serialize(events, JsonOptions));
+        }
+        catch
+        {
+            // 导出不能因为某个旧 record.json 格式异常就中断；原文件仍会随方案一起打包。
+        }
+    }
+
+    private static string? BundleImageForExport(
+        string? imagePath,
+        string sourceProfileDir,
+        string exportProfileDir,
+        Dictionary<string, string> copiedExternalImages)
+    {
+        if (string.IsNullOrWhiteSpace(imagePath))
+            return null;
+
+        var sourceImagePath = Path.IsPathRooted(imagePath)
+            ? imagePath
+            : Path.GetFullPath(Path.Combine(sourceProfileDir, imagePath));
+
+        if (!File.Exists(sourceImagePath))
+            return null;
+
+        var sourceImageFullPath = Path.GetFullPath(sourceImagePath);
+
+        if (IsInsideDirectory(sourceProfileDir, sourceImageFullPath))
+        {
+            var relativePath = Path.GetRelativePath(sourceProfileDir, sourceImageFullPath);
+            var exportedImagePath = Path.Combine(exportProfileDir, relativePath);
+
+            if (!File.Exists(exportedImagePath))
+            {
+                var exportedImageDir = Path.GetDirectoryName(exportedImagePath);
+                if (!string.IsNullOrWhiteSpace(exportedImageDir))
+                    Directory.CreateDirectory(exportedImageDir);
+
+                File.Copy(sourceImageFullPath, exportedImagePath, overwrite: true);
+            }
+
+            return relativePath;
+        }
+
+        if (copiedExternalImages.TryGetValue(sourceImageFullPath, out var existingRelativePath))
+            return existingRelativePath;
+
+        var imagesDir = Path.Combine(exportProfileDir, "Images");
+        Directory.CreateDirectory(imagesDir);
+
+        var destinationPath = GetUniqueDestinationPath(imagesDir, Path.GetFileName(sourceImageFullPath));
+        File.Copy(sourceImageFullPath, destinationPath, overwrite: true);
+
+        var relative = Path.GetRelativePath(exportProfileDir, destinationPath);
+        copiedExternalImages[sourceImageFullPath] = relative;
+        return relative;
+    }
+
+    private static bool IsInsideDirectory(string directory, string filePath)
+    {
+        var directoryFullPath = Path.GetFullPath(directory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fileFullPath = Path.GetFullPath(filePath);
+
+        return fileFullPath.StartsWith(directoryFullPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string GetUniqueDestinationPath(string directory, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            fileName = $"{Guid.NewGuid():N}.png";
+
+        var destination = Path.Combine(directory, fileName);
+        if (!File.Exists(destination))
+            return destination;
+
+        var name = Path.GetFileNameWithoutExtension(fileName);
+        var extension = Path.GetExtension(fileName);
+        return Path.Combine(directory, $"{name}_{Guid.NewGuid():N}{extension}");
+    }
+
+    private static void CopyDirectory(string source, string destination, bool overwrite = false)
     {
         Directory.CreateDirectory(destination);
 
         foreach (var file in Directory.GetFiles(source))
-            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite);
 
         foreach (var dir in Directory.GetDirectories(source))
-            CopyDirectory(dir, Path.Combine(destination, Path.GetFileName(dir)));
+            CopyDirectory(dir, Path.Combine(destination, Path.GetFileName(dir)), overwrite);
     }
 }

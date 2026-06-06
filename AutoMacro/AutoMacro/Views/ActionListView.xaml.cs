@@ -1,9 +1,11 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AutoMacro.Models;
+using AutoMacro.ViewModels;
 using UserControl = System.Windows.Controls.UserControl;
 
 namespace AutoMacro.Views;
@@ -18,6 +20,36 @@ public partial class ActionListView : UserControl
     private void ActionDataGrid_LoadingRow(object sender, DataGridRowEventArgs e)
     {
         e.Row.Header = (e.Row.GetIndex() + 1).ToString();
+        e.Row.PreviewMouseRightButtonDown -= ActionDataGridRow_PreviewMouseRightButtonDown;
+        e.Row.PreviewMouseRightButtonDown += ActionDataGridRow_PreviewMouseRightButtonDown;
+
+        if (e.Row.ContextMenu is null)
+        {
+            var menu = new ContextMenu();
+            var deleteItem = new MenuItem { Header = "删除这一步" };
+            deleteItem.Click += DeleteStepMenuItem_Click;
+            menu.Items.Add(deleteItem);
+            e.Row.ContextMenu = menu;
+        }
+    }
+
+    private void ActionDataGridRow_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not DataGridRow row)
+            return;
+
+        row.IsSelected = true;
+        row.Focus();
+        ActionDataGrid.SelectedItem = row.Item;
+    }
+
+    private void DeleteStepMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (ActionDataGrid.SelectedItem is not InputEvent action)
+            return;
+
+        if (DataContext is ActionListViewModel viewModel)
+            viewModel.DeleteAction(action);
     }
 
     private void PreviewImage_Click(object sender, RoutedEventArgs e)

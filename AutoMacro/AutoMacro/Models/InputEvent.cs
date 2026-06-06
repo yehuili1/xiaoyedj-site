@@ -16,6 +16,7 @@ public enum InputEventType
     MouseWheel,
     Delay,
     ClipboardPaste,
+    KeyCombo,
     ImageClick,
     WaitImage,
     WaitText,
@@ -62,6 +63,27 @@ public partial class InputEvent : ObservableObject
 
     [ObservableProperty]
     private int _relativeY;
+
+    [ObservableProperty]
+    private int _recordedWindowWidth;
+
+    [ObservableProperty]
+    private int _recordedWindowHeight;
+
+    [ObservableProperty]
+    private bool _useWindowClientCoordinates;
+
+    [ObservableProperty]
+    private int _clientRelativeX;
+
+    [ObservableProperty]
+    private int _clientRelativeY;
+
+    [ObservableProperty]
+    private int _recordedClientWidth;
+
+    [ObservableProperty]
+    private int _recordedClientHeight;
 
     [ObservableProperty]
     private string? _windowTitle;
@@ -122,6 +144,7 @@ public partial class InputEvent : ObservableObject
         InputEventType.MouseWheel => "滚动鼠标",
         InputEventType.Delay => "等待",
         InputEventType.ClipboardPaste => "填写变量",
+        InputEventType.KeyCombo => $"按键 {TextPattern}",
         InputEventType.ImageClick => "看到图片就点击",
         InputEventType.WaitImage => "等待图片出现",
         InputEventType.WaitText => "等待文字出现",
@@ -152,6 +175,7 @@ public partial class InputEvent : ObservableObject
         InputEventType.MouseWheel => $"滚轮: {WheelDelta}",
         InputEventType.Delay => $"等待: {DeltaMs}ms",
         InputEventType.ClipboardPaste => $"填写变量: {VariableMarker}",
+        InputEventType.KeyCombo => $"按键操作: {TextPattern}",
         InputEventType.ImageClick => "找到图片后点击",
         InputEventType.WaitImage => "等待图片出现",
         InputEventType.WaitText => $"等待文字出现: {TextPattern}{OcrRegionText}",
@@ -180,24 +204,28 @@ public partial class InputEvent : ObservableObject
     public bool CanEditTimeout => EventType is InputEventType.ImageClick or InputEventType.WaitImage
         or InputEventType.WaitText or InputEventType.ClickText
         or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify
-        or InputEventType.WaitWindow;
+        or InputEventType.WaitWindow or InputEventType.KeyCombo;
 
     [JsonIgnore]
-    public bool CanEditAfterFoundDelay => EventType == InputEventType.ImageClick;
+    public bool CanEditAfterFoundDelay => EventType is InputEventType.ImageClick or InputEventType.KeyCombo;
 
     [JsonIgnore]
     public string TimeoutText => EventType switch
     {
         InputEventType.ImageClick or InputEventType.WaitImage or InputEventType.WaitText or InputEventType.ClickText
             or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify or InputEventType.WaitWindow
+            or InputEventType.KeyCombo
             => $"{TimeoutMs / 1000.0:0.#} 秒",
         _ => string.Empty
     };
 
     [JsonIgnore]
-    public string AfterFoundDelayDisplayText => EventType == InputEventType.ImageClick
-        ? $"{AfterFoundDelayMs / 1000.0:0.#} 秒"
-        : string.Empty;
+    public string AfterFoundDelayDisplayText => EventType switch
+    {
+        InputEventType.ImageClick => $"{AfterFoundDelayMs / 1000.0:0.#} 秒",
+        InputEventType.KeyCombo => $"{DeltaMs / 1000.0:0.#} 秒",
+        _ => string.Empty
+    };
 
     partial void OnEventTypeChanged(InputEventType value)
     {
@@ -211,6 +239,18 @@ public partial class InputEvent : ObservableObject
     }
 
     partial void OnImagePathChanged(string? value) => OnPropertyChanged(nameof(HasImage));
+
+    partial void OnTextPatternChanged(string? value)
+    {
+        OnPropertyChanged(nameof(ActionName));
+        OnPropertyChanged(nameof(Details));
+    }
+
+    partial void OnDeltaMsChanged(long value)
+    {
+        OnPropertyChanged(nameof(Details));
+        OnPropertyChanged(nameof(AfterFoundDelayDisplayText));
+    }
 
     partial void OnTimeoutMsChanged(int value)
     {

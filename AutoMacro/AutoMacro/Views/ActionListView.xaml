@@ -34,6 +34,10 @@
                            ToolTip="添加等待"
                            Command="{Binding AddActionCommand}"
                            Margin="0,0,4,0" />
+                <ui:Button Content="按键操作"
+                           ToolTip="点击后按下要执行的按键，自动识别"
+                           Command="{Binding AddKeyComboCommand}"
+                           Margin="0,0,4,0" />
                 <ui:Button Content="看到图片就点击"
                            Command="{Binding AddImageClickCommand}"
                            Margin="0,0,4,0" />
@@ -95,7 +99,8 @@
                            Appearance="Danger"
                            Margin="0,0,10,0" />
                 <ui:Button Icon="{ui:SymbolIcon Save24}"
-                           Content="保存"
+                           Content="全局保存"
+                           ToolTip="保存当前方案设置和脚本步骤"
                            Command="{Binding SaveActionsCommand}"
                            Appearance="Primary" />
             </WrapPanel>

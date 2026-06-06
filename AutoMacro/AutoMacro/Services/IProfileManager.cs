@@ -17,4 +17,6 @@ public interface IProfileManager
     void SaveVariableTable(RecordProfile profile, VariableTable table);
     void ExportProfile(RecordProfile profile, string zipPath);
     RecordProfile ImportProfile(string zipPath);
+    void ExportGlobalConfig(string zipPath);
+    void ImportGlobalConfig(string zipPath);
 }

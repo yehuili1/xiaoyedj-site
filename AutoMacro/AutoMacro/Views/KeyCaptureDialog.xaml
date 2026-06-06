@@ -1,0 +1,71 @@
+<ui:FluentWindow
+    x:Class="AutoMacro.Views.KeyCaptureDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="按键操作"
+    Width="380"
+    Height="260"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    Icon="/Assets/icon.ico"
+    Loaded="Window_Loaded"
+    PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Grid Margin="20,40,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="按下要执行的按键"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   Foreground="White"
+                   Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="1"
+                   Text="可以直接按 F5，也可以按 Ctrl+A、Alt+F4 这类组合键。"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,16" />
+
+        <ui:TextBox Grid.Row="2"
+                    x:Name="CapturedKeyBox"
+                    IsReadOnly="True"
+                    FontSize="24"
+                    FontWeight="SemiBold"
+                    TextAlignment="Center"
+                    PlaceholderText="等待按键"
+                    MinHeight="58"
+                    GotFocus="CapturedKeyBox_GotFocus" />
+
+        <TextBlock Grid.Row="3"
+                   x:Name="StatusText"
+                   Text="点到这个窗口后，直接按键即可自动识别。"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,12,0,0" />
+
+        <StackPanel Grid.Row="4"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,18,0,0">
+            <ui:Button Content="取消"
+                       Click="Cancel_Click"
+                       Margin="0,0,8,0"
+                       MinWidth="80" />
+            <ui:Button x:Name="ConfirmButton"
+                       Content="确定"
+                       Appearance="Primary"
+                       Click="Confirm_Click"
+                       IsEnabled="False"
+                       MinWidth="80" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

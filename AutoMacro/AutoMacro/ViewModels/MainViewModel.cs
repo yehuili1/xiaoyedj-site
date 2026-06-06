@@ -8,7 +8,6 @@ using AutoMacro.Models;
 using AutoMacro.Services;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using Wpf.Ui.Controls;
 
 namespace AutoMacro.ViewModels;
 
@@ -33,16 +32,22 @@ public partial class MainViewModel : ObservableObject
     private RecordProfile? _selectedProfile;
 
     [ObservableProperty]
-    private ObservableCollection<TreeNodeViewModel> _treeNodes = new();
-
-    [ObservableProperty]
-    private TreeNodeViewModel? _selectedTreeNode;
-
-    [ObservableProperty]
-    private int _activeTabIndex;
-
-    [ObservableProperty]
     private string _statusText = "就绪";
+
+    [ObservableProperty]
+    private string _currentStepText = "等待任务";
+
+    [ObservableProperty]
+    private string _currentStepDetail = "就绪";
+
+    [ObservableProperty]
+    private string? _currentStepImagePath;
+
+    [ObservableProperty]
+    private bool _currentStepHasImage;
+
+    [ObservableProperty]
+    private string _currentStepBadgeText = "待命";
 
     [ObservableProperty]
     private bool _isRecording;
@@ -99,6 +104,7 @@ public partial class MainViewModel : ObservableObject
 
         _recordingService.EventRecorded += OnEventRecorded;
         _playbackService.PlaybackStopped += OnPlaybackStopped;
+        _playbackService.StepChanged += OnPlaybackStepChanged;
         _playbackService.LoopChanged += (_, _) =>
             Application.Current.Dispatcher.BeginInvoke(UpdateStatus);
 
@@ -197,7 +203,6 @@ public partial class MainViewModel : ObservableObject
                 LoopCount = 1;
             if (Math.Abs(PlaybackSpeed - 1.0) > 0.001)
                 PlaybackSpeed = 1.0;
-            TreeNodes.Clear();
             return;
         }
 
@@ -210,32 +215,6 @@ public partial class MainViewModel : ObservableObject
 
         ActionListVm.LoadFromProfile(value);
         VariableEditorVm.LoadFromProfile(value);
-
-        var root = new TreeNodeViewModel
-        {
-            Name = value.Name,
-            IconGlyph = SymbolRegular.Folder24,
-            Tag = "Root",
-            IsExpanded = true,
-            Children = new ObservableCollection<TreeNodeViewModel>
-            {
-                new() { Name = "脚本步骤", IconGlyph = SymbolRegular.Script24, Tag = "ActionScript" },
-                new() { Name = "变量表", IconGlyph = SymbolRegular.Table24, Tag = "VariableTable" },
-            }
-        };
-        TreeNodes = new ObservableCollection<TreeNodeViewModel> { root };
-        SelectedTreeNode = root.Children[0];
-    }
-
-    partial void OnSelectedTreeNodeChanged(TreeNodeViewModel? value)
-    {
-        if (value is null) return;
-        ActiveTabIndex = value.Tag switch
-        {
-            "ActionScript" => 0,
-            "VariableTable" => 1,
-            _ => ActiveTabIndex
-        };
     }
 
     [RelayCommand]
@@ -334,12 +313,22 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ExportProfile()
     {
-        if (SelectedProfile is null) return;
+        if (IsRecording || IsPlaying)
+        {
+            System.Windows.MessageBox.Show(
+                "请先停止录制或回放，再导出全局配置。",
+                "导出全局配置",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        SaveCurrentProfileData();
 
         var dialog = new Microsoft.Win32.SaveFileDialog
         {
-            Title = "导出方案",
-            FileName = $"{SelectedProfile.Name}.zip",
+            Title = "导出全局配置",
+            FileName = $"全能脚本全局配置_{DateTime.Now:yyyyMMdd_HHmmss}.zip",
             Filter = "ZIP 压缩包|*.zip",
             DefaultExt = ".zip"
         };
@@ -348,14 +337,16 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            _profileManager.ExportProfile(SelectedProfile, dialog.FileName);
+            _profileManager.ExportGlobalConfig(dialog.FileName);
             System.Windows.MessageBox.Show(
-                $"方案 \"{SelectedProfile.Name}\" 已导出到:\n{dialog.FileName}",
-                "导出成功", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                $"全局配置已导出到:\n{dialog.FileName}\n\n里面包含所有方案、方案设置、变量表、图片和快捷键。",
+                "导出成功",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(ex.Message, "导出失败",
+            System.Windows.MessageBox.Show(ex.Message, "导出全局配置失败",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
         }
     }
@@ -363,29 +354,63 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ImportProfile()
     {
+        if (IsRecording || IsPlaying)
+        {
+            System.Windows.MessageBox.Show(
+                "请先停止录制或回放，再导入全局配置。",
+                "导入全局配置",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
         var dialog = new Microsoft.Win32.OpenFileDialog
         {
-            Title = "导入方案",
+            Title = "导入全局配置",
             Filter = "ZIP 压缩包|*.zip",
             DefaultExt = ".zip"
         };
 
         if (dialog.ShowDialog() != true) return;
 
+        var confirm = System.Windows.MessageBox.Show(
+            "导入全局配置会覆盖当前软件里的所有方案和快捷键设置。\n\n确定继续吗？",
+            "导入全局配置",
+            System.Windows.MessageBoxButton.YesNo,
+            System.Windows.MessageBoxImage.Warning);
+
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
+
         try
         {
-            var profile = _profileManager.ImportProfile(dialog.FileName);
+            var selectedName = SelectedProfile?.Name;
+            SelectedProfile = null;
+            _profileManager.ImportGlobalConfig(dialog.FileName);
             Profiles = _profileManager.Profiles;
-            SelectedProfile = profile;
+            SelectedProfile = Profiles.FirstOrDefault(p => p.Name == selectedName) ?? Profiles.FirstOrDefault();
+            _hotkeyService.ReloadSettings();
+            RefreshHotkeyTexts();
+
             System.Windows.MessageBox.Show(
-                $"方案 \"{profile.Name}\" 已导入成功。",
-                "导入成功", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+                "全局配置已导入成功。\n\n所有方案、方案设置、变量表、图片和快捷键已经恢复。",
+                "导入成功",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show(ex.Message, "导入失败",
+            System.Windows.MessageBox.Show(ex.Message, "导入全局配置失败",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
         }
+    }
+
+    private void SaveCurrentProfileData()
+    {
+        if (SelectedProfile is null) return;
+
+        _profileManager.SaveProfile(SelectedProfile);
+        _profileManager.SaveActions(SelectedProfile, ActionListVm.Actions.ToList());
+        VariableEditorVm.SaveCsv();
     }
 
     [RelayCommand]
@@ -492,6 +517,7 @@ public partial class MainViewModel : ObservableObject
 
         VariableEditorVm.SaveCsv();
         IsPlaying = true;
+        SetCurrentStepWaiting("准备播放", "正在读取步骤");
         await _playbackService.StartPlaybackAsync(
             ActionListVm.Actions.ToList(),
             VariableEditorVm.VariableTable,
@@ -510,13 +536,20 @@ public partial class MainViewModel : ObservableObject
             string.Equals(p.Name, profileName, StringComparison.OrdinalIgnoreCase));
         if (profile is null) return;
 
-        // 切换到目标方案并加载数据
-        SelectedProfile = profile;
+        if (!ReferenceEquals(SelectedProfile, profile))
+        {
+            SaveCurrentProfileData();
+            SelectedProfile = profile;
+            StatusText = $"已切换到方案：{profile.Name}";
+            SetCurrentStepWaiting("已切换方案", "再按一次方案快捷键开始播放");
+            return;
+        }
 
         if (ActionListVm.Actions.Count == 0) return;
 
         VariableEditorVm.SaveCsv();
         IsPlaying = true;
+        SetCurrentStepWaiting("准备播放", "正在读取步骤");
         await _playbackService.StartPlaybackAsync(
             ActionListVm.Actions.ToList(),
             VariableEditorVm.VariableTable,
@@ -579,7 +612,67 @@ public partial class MainViewModel : ObservableObject
         {
             IsPlaying = false;
             IsPaused = false;
+            SetCurrentStepWaiting("等待任务", "就绪");
         });
+    }
+
+    private void OnPlaybackStepChanged(object? sender, PlaybackStepChangedEventArgs e)
+    {
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            var action = e.Action;
+            CurrentStepText = $"第 {e.StepIndex}/{e.TotalSteps} 步：{action.ActionName}";
+            CurrentStepDetail = BuildCurrentStepDetail(action);
+            CurrentStepImagePath = action.HasImage && File.Exists(action.ImagePath)
+                ? action.ImagePath
+                : null;
+            CurrentStepHasImage = CurrentStepImagePath is not null;
+            CurrentStepBadgeText = BuildCurrentStepBadge(action);
+        });
+    }
+
+    private void SetCurrentStepWaiting(string text, string detail)
+    {
+        CurrentStepText = text;
+        CurrentStepDetail = detail;
+        CurrentStepImagePath = null;
+        CurrentStepHasImage = false;
+        CurrentStepBadgeText = "待命";
+    }
+
+    private static string BuildCurrentStepDetail(InputEvent action)
+    {
+        return action.EventType switch
+        {
+            InputEventType.KeyCombo => $"执行按键：{action.TextPattern}",
+            InputEventType.ImageClick => "找到这张图后点击",
+            InputEventType.WaitImage => "等待这张图出现",
+            InputEventType.WaitText => $"等待文字：{action.TextPattern}",
+            InputEventType.ClickText => $"看到文字后点击：{action.TextPattern}",
+            InputEventType.ReadText => "识别屏幕文字",
+            InputEventType.WaitWindow => $"等待窗口：{action.WindowTitle}",
+            InputEventType.ActivateWindow => $"切换窗口：{action.WindowTitle}",
+            InputEventType.Delay => $"等待 {action.DeltaMs / 1000.0:0.#} 秒",
+            InputEventType.ReadData => "读取接口数据",
+            InputEventType.SubmitData => "提交接口结果",
+            InputEventType.Notify => "发送完成通知",
+            _ => action.Details
+        };
+    }
+
+    private static string BuildCurrentStepBadge(InputEvent action)
+    {
+        return action.EventType switch
+        {
+            InputEventType.KeyCombo => string.IsNullOrWhiteSpace(action.TextPattern) ? "按键" : action.TextPattern,
+            InputEventType.ImageClick or InputEventType.WaitImage => "图片",
+            InputEventType.WaitText or InputEventType.ClickText or InputEventType.ReadText => "文字",
+            InputEventType.WaitWindow or InputEventType.ActivateWindow => "窗口",
+            InputEventType.Delay => "等待",
+            InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify => "API",
+            InputEventType.MouseDown or InputEventType.MouseUp or InputEventType.MouseMove or InputEventType.MouseWheel => "鼠标",
+            _ => "步骤"
+        };
     }
 
     private static double NormalizePlaybackSpeed(double value)

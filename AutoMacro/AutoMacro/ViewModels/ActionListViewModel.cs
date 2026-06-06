@@ -6,6 +6,7 @@ using AutoMacro.Views;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using SharpHook.Data;
 using Application = System.Windows.Application;
 
 namespace AutoMacro.ViewModels;
@@ -62,6 +63,48 @@ public partial class ActionListViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void AddKeyCombo()
+    {
+        var dialog = new KeyCaptureDialog
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.SelectedKeyCombo))
+            return;
+
+        var normalized = NormalizeKeyComboText(dialog.SelectedKeyCombo);
+        var binding = HotkeySettings.ParseHotkey(normalized);
+        if (!binding.IsValid)
+        {
+            System.Windows.MessageBox.Show(
+                "这个按键暂时不支持。\n\n可以换一个常用按键，例如 Ctrl+A、Alt+F4、F5、Enter。",
+                "按键操作",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+            return;
+        }
+
+        var delaySeconds = PromptNumber("按键操作", "延迟执行时间：等多少秒后再按键？", 1);
+        if (delaySeconds is null) return;
+
+        var timeoutSeconds = PromptNumber("按键操作", "超时时间：最长允许这个按键操作执行多少秒？", 10);
+        if (timeoutSeconds is null) return;
+
+        var action = new InputEvent
+        {
+            EventType = InputEventType.KeyCombo,
+            TextPattern = normalized,
+            DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600),
+            TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600)
+        };
+
+        InsertAction(action);
+        SelectedAction = action;
+        SelectedIndex = Actions.IndexOf(action);
+    }
+
+    [RelayCommand]
     private void AddImageClick()
     {
         while (true)
@@ -69,7 +112,7 @@ public partial class ActionListViewModel : ObservableObject
             var path = PickImage();
             if (path is null) return;
 
-            var delaySeconds = PromptNumber("看到图片就点击", "延迟执行时间：图片出现后，等多少秒再点击？", 2);
+            var delaySeconds = PromptNumber("看到图片就点击", "延迟执行时间：图片出现后，等多少秒再点击？", 1);
             if (delaySeconds is null) return;
 
             var timeoutSeconds = PromptNumber("看到图片就点击", "超时时间：最长等待图片出现多少秒？", 10);
@@ -192,6 +235,25 @@ public partial class ActionListViewModel : ObservableObject
             return;
         }
 
+        if (SelectedAction.EventType == InputEventType.KeyCombo)
+        {
+            var delaySeconds = PromptNumber(
+                "时间设置",
+                "延迟多少秒后执行按键：",
+                Math.Max(0, SelectedAction.DeltaMs / 1000.0));
+            if (delaySeconds is null) return;
+
+            var timeoutSeconds = PromptNumber(
+                "时间设置",
+                "最长允许这个按键操作执行多少秒：",
+                Math.Max(1, SelectedAction.TimeoutMs / 1000.0));
+            if (timeoutSeconds is null) return;
+
+            SelectedAction.DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
+            SelectedAction.TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600);
+            return;
+        }
+
         if (SelectedAction.EventType is InputEventType.WaitImage or InputEventType.WaitText or InputEventType.ClickText or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify)
         {
             var timeoutSeconds = PromptNumber(
@@ -238,13 +300,22 @@ public partial class ActionListViewModel : ObservableObject
         SelectedAction = action;
         SelectedIndex = Actions.IndexOf(action);
 
+        var prompt = action.EventType == InputEventType.KeyCombo
+            ? "延迟时间：等多少秒后执行按键？"
+            : "延迟时间：图片出现后，等多少秒再点击？";
+        var defaultValue = action.EventType == InputEventType.KeyCombo
+            ? Math.Max(0, action.DeltaMs / 1000.0)
+            : Math.Max(0, action.AfterFoundDelayMs / 1000.0);
         var delaySeconds = PromptNumber(
             "修改延迟时间",
-            "延迟时间：图片出现后，等多少秒再点击？",
-            Math.Max(0, action.AfterFoundDelayMs / 1000.0));
+            prompt,
+            defaultValue);
         if (delaySeconds is null) return;
 
-        action.AfterFoundDelayMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
+        if (action.EventType == InputEventType.KeyCombo)
+            action.DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
+        else
+            action.AfterFoundDelayMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
     }
 
     [RelayCommand]
@@ -579,6 +650,25 @@ public partial class ActionListViewModel : ObservableObject
             Actions.Remove(SelectedAction);
     }
 
+    public void DeleteAction(InputEvent action)
+    {
+        if (!Actions.Contains(action))
+            return;
+
+        var index = Actions.IndexOf(action);
+        Actions.Remove(action);
+
+        if (Actions.Count == 0)
+        {
+            SelectedAction = null;
+            SelectedIndex = -1;
+            return;
+        }
+
+        SelectedIndex = Math.Min(index, Actions.Count - 1);
+        SelectedAction = Actions[SelectedIndex];
+    }
+
     [RelayCommand]
     private void ClearAll()
     {
@@ -624,8 +714,35 @@ public partial class ActionListViewModel : ObservableObject
     [RelayCommand]
     private void SaveActions()
     {
-        if (_currentProfile is not null)
+        if (_currentProfile is null)
+        {
+            System.Windows.MessageBox.Show(
+                "请先选择一个方案，再保存。",
+                "全局保存",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            _profileManager.SaveProfile(_currentProfile);
             _profileManager.SaveActions(_currentProfile, Actions.ToList());
+
+            System.Windows.MessageBox.Show(
+                "已全局保存。\n\n当前方案设置和脚本步骤已经保存。",
+                "全局保存成功",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(
+                ex.Message,
+                "全局保存失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
     }
 
     private void InsertAction(InputEvent evt)
@@ -672,6 +789,74 @@ public partial class ActionListViewModel : ObservableObject
     private static string PromptText(string title, string prompt, string defaultValue = "")
     {
         return Microsoft.VisualBasic.Interaction.InputBox(prompt, title, defaultValue);
+    }
+
+    private static string NormalizeKeyComboText(string text)
+    {
+        var parts = text
+            .Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .ToList();
+
+        if (parts.Count == 0)
+            return string.Empty;
+
+        var modifiers = new List<string>();
+        string? mainKey = null;
+
+        foreach (var part in parts)
+        {
+            var normalized = part.Trim().ToUpperInvariant() switch
+            {
+                "CONTROL" => "CTRL",
+                "CTRL" => "CTRL",
+                "SHIFT" => "SHIFT",
+                "ALT" => "ALT",
+                "OPTION" => "ALT",
+                _ => part.Trim().ToUpperInvariant()
+            };
+
+            switch (normalized)
+            {
+                case "CTRL":
+                    AddUnique(modifiers, "Ctrl");
+                    break;
+                case "SHIFT":
+                    AddUnique(modifiers, "Shift");
+                    break;
+                case "ALT":
+                    AddUnique(modifiers, "Alt");
+                    break;
+                default:
+                    mainKey = normalized switch
+                    {
+                        "ESCAPE" => "Escape",
+                        "ESC" => "Esc",
+                        "ENTER" => "Enter",
+                        "RETURN" => "Enter",
+                        "TAB" => "Tab",
+                        "SPACE" => "Space",
+                        "DELETE" => "Delete",
+                        "BACKSPACE" => "Backspace",
+                        "CAPSLOCK" => "CapsLock",
+                        "CAPS LOCK" => "CapsLock",
+                        _ => normalized
+                    };
+                    break;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(mainKey))
+            return text.Trim();
+
+        modifiers.Add(mainKey);
+        return string.Join("+", modifiers);
+    }
+
+    private static void AddUnique(ICollection<string> values, string value)
+    {
+        if (!values.Contains(value))
+            values.Add(value);
     }
 
     private static double? PromptNumber(string title, string prompt, double defaultValue)
