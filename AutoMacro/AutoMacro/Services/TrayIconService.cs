@@ -42,7 +42,7 @@ public class TrayIconService : IDisposable
         _notifyIcon = new WinForms.NotifyIcon
         {
             Icon = _idleIcon,
-            Text = "全能脚本V2.2.1",
+            Text = "全能脚本V2.2.2",
             Visible = true,
             ContextMenuStrip = contextMenu
         };
@@ -55,17 +55,17 @@ public class TrayIconService : IDisposable
         if (isRecording)
         {
             _notifyIcon.Icon = _recordingIcon;
-            _notifyIcon.Text = "全能脚本V2.2.1 - 录制中";
+            _notifyIcon.Text = "全能脚本V2.2.2 - 录制中";
         }
         else if (isPlaying)
         {
             _notifyIcon.Icon = _playingIcon;
-            _notifyIcon.Text = "全能脚本V2.2.1 - 播放中";
+            _notifyIcon.Text = "全能脚本V2.2.2 - 播放中";
         }
         else
         {
             _notifyIcon.Icon = _idleIcon;
-            _notifyIcon.Text = "全能脚本V2.2.1";
+            _notifyIcon.Text = "全能脚本V2.2.2";
         }
     }
 
