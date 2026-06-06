@@ -74,7 +74,7 @@ public partial class MainViewModel : ObservableObject
 
     public string RecordButtonText => IsRecording ? "停止录制" : "开始录制";
     public string PauseButtonText => IsPaused ? "继续" : "暂停";
-    public string PlaybackButtonText => IsPlaying ? "停止回放" : "开始回放";
+    public string PlaybackButtonText => IsPlaying ? "停止播放" : "开始播放";
     public bool ShowPauseButton => IsRecording || IsPlaying;
 
     public MainViewModel(
@@ -155,7 +155,7 @@ public partial class MainViewModel : ObservableObject
         else if (IsRecording)
             StatusText = "录制中...";
         else if (IsPlaying)
-            StatusText = $"回放中 (第{_playbackService.CurrentLoop}轮, {PlaybackSpeed:0.##}x)...";
+            StatusText = $"播放中 (第{_playbackService.CurrentLoop}轮, {PlaybackSpeed:0.##}x)...";
         else
             StatusText = "就绪";
     }
@@ -219,7 +219,7 @@ public partial class MainViewModel : ObservableObject
             IsExpanded = true,
             Children = new ObservableCollection<TreeNodeViewModel>
             {
-                new() { Name = "动作脚本", IconGlyph = SymbolRegular.Script24, Tag = "ActionScript" },
+                new() { Name = "脚本步骤", IconGlyph = SymbolRegular.Script24, Tag = "ActionScript" },
                 new() { Name = "变量表", IconGlyph = SymbolRegular.Table24, Tag = "VariableTable" },
             }
         };

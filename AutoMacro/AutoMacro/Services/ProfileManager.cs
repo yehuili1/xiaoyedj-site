@@ -282,7 +282,18 @@ public class ProfileManager : IProfileManager
             WindowProcessName = evt.WindowProcessName,
             ImagePath = ToProfileRelativePath(profile, evt.ImagePath),
             MatchThreshold = evt.MatchThreshold,
-            TimeoutMs = evt.TimeoutMs
+            TimeoutMs = evt.TimeoutMs,
+            AfterFoundDelayMs = evt.AfterFoundDelayMs,
+            TextPattern = evt.TextPattern,
+            UseOcrRegion = evt.UseOcrRegion,
+            OcrRegionX = evt.OcrRegionX,
+            OcrRegionY = evt.OcrRegionY,
+            OcrRegionWidth = evt.OcrRegionWidth,
+            OcrRegionHeight = evt.OcrRegionHeight,
+            RequestUrl = evt.RequestUrl,
+            RequestMethod = evt.RequestMethod,
+            RequestBody = evt.RequestBody,
+            ResponseVariableName = evt.ResponseVariableName
         };
     }
 

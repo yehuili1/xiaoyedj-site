@@ -11,7 +11,10 @@ public class PlaybackService : IPlaybackService
     private readonly IRunLogger _logger;
     private readonly IWindowAutomationService _windowAutomationService;
     private readonly IImageRecognitionService _imageRecognitionService;
+    private readonly IOcrService _ocrService;
+    private readonly IApiClientService _apiClientService;
     private readonly EventSimulator _simulator = new();
+    private readonly Dictionary<string, string> _runtimeVariables = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource? _cts;
     private TaskCompletionSource<bool>? _pauseTcs;
 
@@ -29,12 +32,16 @@ public class PlaybackService : IPlaybackService
         IClipboardInjector clipboardInjector,
         IRunLogger logger,
         IWindowAutomationService windowAutomationService,
-        IImageRecognitionService imageRecognitionService)
+        IImageRecognitionService imageRecognitionService,
+        IOcrService ocrService,
+        IApiClientService apiClientService)
     {
         _clipboardInjector = clipboardInjector;
         _logger = logger;
         _windowAutomationService = windowAutomationService;
         _imageRecognitionService = imageRecognitionService;
+        _ocrService = ocrService;
+        _apiClientService = apiClientService;
     }
 
     public async Task StartPlaybackAsync(IList<InputEvent> events, VariableTable variableTable, int loopCount, double playbackSpeed)
@@ -47,6 +54,7 @@ public class PlaybackService : IPlaybackService
         IsPaused = false;
         CurrentLoop = 0;
         _variableCounter = 0;
+        _runtimeVariables.Clear();
         _playbackSpeed = NormalizePlaybackSpeed(playbackSpeed);
         _logger.Info("Playback", $"开始回放: actions={events.Count}, rows={variableTable.RowCount}, loopCount={loopCount}, speed={_playbackSpeed:0.##}x");
         PlaybackStarted?.Invoke(this, EventArgs.Empty);
@@ -233,12 +241,102 @@ public class PlaybackService : IPlaybackService
                         break;
                     }
 
+                    if (evt.AfterFoundDelayMs > 0)
+                        await Task.Delay(evt.AfterFoundDelayMs, cancellationToken);
+
                     _simulator.SimulateMouseMovement((short)found.X, (short)found.Y);
                     await Task.Delay(50, cancellationToken);
                     _simulator.SimulateMousePress((short)found.X, (short)found.Y, MouseButton.Button1);
                     await Task.Delay(50, cancellationToken);
                     _simulator.SimulateMouseRelease((short)found.X, (short)found.Y, MouseButton.Button1);
                     _logger.Info("Playback", $"图片点击完成: {Path.GetFileName(evt.ImagePath)}, x={found.X}, y={found.Y}, score={found.Score:0.000}");
+                    break;
+                }
+
+            case InputEventType.WaitText:
+                {
+                    var found = await _ocrService.FindTextAsync(
+                        evt.TextPattern ?? string.Empty,
+                        evt.TimeoutMs,
+                        BuildOcrRegion(evt),
+                        cancellationToken);
+                    if (!found.Found)
+                    {
+                        _logger.Error("OCR", $"等待文字失败: {evt.TextPattern}, {found.ErrorMessage}", captureScreenshot: true);
+                        _cts?.Cancel();
+                    }
+                    break;
+                }
+
+            case InputEventType.ClickText:
+                {
+                    var found = await _ocrService.FindTextAsync(
+                        evt.TextPattern ?? string.Empty,
+                        evt.TimeoutMs,
+                        BuildOcrRegion(evt),
+                        cancellationToken);
+                    if (!found.Found)
+                    {
+                        _logger.Error("OCR", $"点击文字失败: {evt.TextPattern}, {found.ErrorMessage}", captureScreenshot: true);
+                        _cts?.Cancel();
+                        break;
+                    }
+
+                    var x = found.X + found.Width / 2;
+                    var y = found.Y + found.Height / 2;
+                    _simulator.SimulateMouseMovement((short)x, (short)y);
+                    await Task.Delay(50, cancellationToken);
+                    _simulator.SimulateMousePress((short)x, (short)y, MouseButton.Button1);
+                    await Task.Delay(50, cancellationToken);
+                    _simulator.SimulateMouseRelease((short)x, (short)y, MouseButton.Button1);
+                    _logger.Info("OCR", $"文字点击完成: \"{found.Text}\", x={x}, y={y}");
+                    break;
+                }
+
+            case InputEventType.ReadText:
+                {
+                    var read = await _ocrService.RecognizeScreenAsync(BuildOcrRegion(evt), cancellationToken);
+                    if (!read.Success)
+                    {
+                        _logger.Error("OCR", $"读取屏幕文字失败: {read.ErrorMessage}", captureScreenshot: true);
+                        _cts?.Cancel();
+                        break;
+                    }
+
+                    await _clipboardInjector.CopyTextAsync(read.Text);
+                    SaveRuntimeVariable("识别文字", read.Text);
+                    _logger.Info("OCR", $"读取屏幕文字完成，已复制到剪贴板，length={read.Text.Length}");
+                    break;
+                }
+
+            case InputEventType.ReadData:
+            case InputEventType.SubmitData:
+            case InputEventType.Notify:
+                {
+                    var method = string.IsNullOrWhiteSpace(evt.RequestMethod)
+                        ? evt.EventType == InputEventType.ReadData ? "GET" : "POST"
+                        : evt.RequestMethod;
+                    var url = ExpandRuntimeVariables(evt.RequestUrl ?? string.Empty);
+                    var body = ExpandRuntimeVariables(evt.RequestBody ?? string.Empty);
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeoutCts.CancelAfter(Math.Max(1000, evt.TimeoutMs <= 0 ? 10000 : evt.TimeoutMs));
+                    var result = await _apiClientService.SendAsync(method, url, body, timeoutCts.Token);
+                    if (!result.Success)
+                    {
+                        _logger.Error("API", $"请求失败: {url}, status={result.StatusCode}, {result.ErrorMessage}", captureScreenshot: true);
+                        _cts?.Cancel();
+                        break;
+                    }
+
+                    var variableName = string.IsNullOrWhiteSpace(evt.ResponseVariableName)
+                        ? "返回数据"
+                        : evt.ResponseVariableName.Trim();
+                    SaveRuntimeVariable(variableName, result.Body);
+
+                    if (evt.EventType == InputEventType.ReadData)
+                        await _clipboardInjector.CopyTextAsync(result.Body);
+
+                    _logger.Info("API", $"{evt.ActionName}完成，保存变量 \"{variableName}\"，length={result.Body.Length}");
                     break;
                 }
         }
@@ -289,7 +387,42 @@ public class PlaybackService : IPlaybackService
             WindowProcessName = evt.WindowProcessName,
             ImagePath = evt.ImagePath,
             MatchThreshold = evt.MatchThreshold,
-            TimeoutMs = evt.TimeoutMs
+            TimeoutMs = evt.TimeoutMs,
+            AfterFoundDelayMs = evt.AfterFoundDelayMs,
+            TextPattern = evt.TextPattern,
+            UseOcrRegion = evt.UseOcrRegion,
+            OcrRegionX = evt.OcrRegionX,
+            OcrRegionY = evt.OcrRegionY,
+            OcrRegionWidth = evt.OcrRegionWidth,
+            OcrRegionHeight = evt.OcrRegionHeight,
+            RequestUrl = evt.RequestUrl,
+            RequestMethod = evt.RequestMethod,
+            RequestBody = evt.RequestBody,
+            ResponseVariableName = evt.ResponseVariableName
         };
+    }
+
+    private void SaveRuntimeVariable(string name, string value)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+
+        _runtimeVariables[name.Trim()] = value;
+    }
+
+    private string ExpandRuntimeVariables(string value)
+    {
+        var expanded = value;
+        foreach (var variable in _runtimeVariables)
+            expanded = expanded.Replace($"{{{{{variable.Key}}}}}", variable.Value, StringComparison.OrdinalIgnoreCase);
+
+        return expanded;
+    }
+
+    private static OcrRegion? BuildOcrRegion(InputEvent evt)
+    {
+        return evt.UseOcrRegion && evt.OcrRegionWidth > 0 && evt.OcrRegionHeight > 0
+            ? new OcrRegion(evt.OcrRegionX, evt.OcrRegionY, evt.OcrRegionWidth, evt.OcrRegionHeight)
+            : null;
     }
 }

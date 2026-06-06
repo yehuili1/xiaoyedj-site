@@ -61,7 +61,7 @@
             <TextBlock TextWrapping="Wrap" FontSize="12"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}">
                 <Run FontWeight="SemiBold">使用说明：</Run><LineBreak />
-                旧变量脚本仍可读取这里的数据；新版推荐使用图片点击、智能等待和窗口相对坐标。
+                旧脚本仍可读取这里的数据；新版推荐使用“看到图片就点击”“等待图片出现”和窗口相对坐标。
             </TextBlock>
         </Border>
     </Grid>

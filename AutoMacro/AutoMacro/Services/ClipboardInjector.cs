@@ -88,6 +88,12 @@ public class ClipboardInjector : IClipboardInjector
         }
     }
 
+    public async Task CopyTextAsync(string text)
+    {
+        await SetClipboardTextAsync(text);
+        _logger.Info("Clipboard", $"已复制到剪贴板，文本长度={text.Length}");
+    }
+
     private async Task SetClipboardTextAsync(string text)
     {
         Exception? lastError = null;

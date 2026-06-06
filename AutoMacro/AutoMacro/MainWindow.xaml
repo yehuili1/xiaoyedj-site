@@ -7,7 +7,7 @@
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     xmlns:views="clr-namespace:AutoMacro.Views"
     mc:Ignorable="d"
-    Title="全能脚本V2.2.0"
+    Title="全能脚本V2.2.1"
     Width="1200" Height="750"
     MinWidth="900" MinHeight="600"
     WindowStartupLocation="CenterScreen"
@@ -22,7 +22,7 @@
         </Grid.RowDefinitions>
 
         <!-- ===== ROW 0: TITLE BAR ===== -->
-        <ui:TitleBar Grid.Row="0" Title="全能脚本V2.2.0" />
+        <ui:TitleBar Grid.Row="0" Title="全能脚本V2.2.1" />
 
         <!-- ===== ROW 1: LEFT NAV + CENTER WORK AREA ===== -->
         <Grid Grid.Row="1">
@@ -118,7 +118,7 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0"
-                                   Text="回放倍速:"
+                                   Text="播放速度:"
                                    VerticalAlignment="Center"
                                    FontSize="13"
                                    Margin="2,0,8,0" />

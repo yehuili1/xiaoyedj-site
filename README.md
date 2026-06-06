@@ -8,9 +8,9 @@
 
 请到 GitHub 仓库的 [Releases](https://github.com/yehuili1/xiaoyedj-site/releases) 下载最新版压缩包。
 
-当前版本：`v2.2.0`
+当前版本：`v2.2.1`
 
-发布包内是独立可执行文件，解压后运行 `全能脚本V2.2.0.exe` 即可。
+发布包内是独立可执行文件，解压后运行 `全能脚本V2.2.1.exe` 即可。
 
 ## 主要功能
 
@@ -26,7 +26,7 @@
 ## 快速使用
 
 1. 下载并解压 Release 包。
-2. 双击运行 `全能脚本V2.2.0.exe`。
+2. 双击运行 `全能脚本V2.2.1.exe`。
 3. 新建一个方案。
 4. 点击“开始录制”，完成目标操作后停止录制。
 5. 根据需要调整循环次数、回放倍速或变量表。
@@ -80,7 +80,7 @@ dotnet publish AutoMacro\AutoMacro\AutoMacro.csproj -c Release -r win-x64 --self
 1. 确认 `AutoMacro/AutoMacro/AutoMacro.csproj` 中的版本号已更新。
 2. 执行 `dotnet build AutoMacro.sln`，确保构建通过。
 3. 打包发布产物为 zip。
-4. 创建版本标签，例如 `v2.2.0`。
+4. 创建版本标签，例如 `v2.2.1`。
 5. 在 GitHub Releases 创建同名版本，并上传 zip 附件。
 
 本仓库已忽略构建输出、发布目录、zip 包、日志和运行配置，避免把本机产物提交进源码仓库。

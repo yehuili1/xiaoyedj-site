@@ -25,6 +25,8 @@ public partial class App : Application
             services.AddSingleton<IClipboardInjector, ClipboardInjector>();
             services.AddSingleton<IWindowAutomationService, WindowAutomationService>();
             services.AddSingleton<IImageRecognitionService, ImageRecognitionService>();
+            services.AddSingleton<IOcrService, WindowsOcrService>();
+            services.AddSingleton<IApiClientService, ApiClientService>();
 
             // ViewModels
             services.AddSingleton<MainViewModel>();

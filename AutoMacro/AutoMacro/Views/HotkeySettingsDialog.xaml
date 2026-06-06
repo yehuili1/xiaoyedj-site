@@ -68,7 +68,7 @@
             <ui:Button Grid.Row="2" Grid.Column="2" Content="清除"
                        Click="ClearHotkey_Click" Tag="TbStop" Padding="8,4" Margin="0,0,0,10" />
 
-            <TextBlock Grid.Row="3" Grid.Column="0" Text="开始/停止回放:"
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="开始/停止播放:"
                        VerticalAlignment="Center" Foreground="White" Margin="0,0,0,10" />
             <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="TbPlayback"
                         IsReadOnly="True" PlaceholderText="点击后按键"
@@ -82,7 +82,7 @@
         <StackPanel Grid.Row="3" Margin="0,8,0,0">
             <TextBlock Text="方案快捷键" FontSize="14" FontWeight="SemiBold"
                        Foreground="White" Margin="0,0,0,4" />
-            <TextBlock Text="为方案绑定快捷键，按下后直接启动该方案的回放"
+            <TextBlock Text="为方案绑定快捷键，按下后直接播放这个方案"
                        Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                        Margin="0,0,0,8" FontSize="12" />
             <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">

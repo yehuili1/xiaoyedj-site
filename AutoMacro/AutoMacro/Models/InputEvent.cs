@@ -18,6 +18,12 @@ public enum InputEventType
     ClipboardPaste,
     ImageClick,
     WaitImage,
+    WaitText,
+    ClickText,
+    ReadText,
+    ReadData,
+    SubmitData,
+    Notify,
     WaitWindow,
     ActivateWindow
 }
@@ -70,7 +76,64 @@ public partial class InputEvent : ObservableObject
     private double _matchThreshold = 0.92;
 
     [ObservableProperty]
-    private int _timeoutMs = 5000;
+    private int _timeoutMs = 10000;
+
+    [ObservableProperty]
+    private int _afterFoundDelayMs;
+
+    [ObservableProperty]
+    private string? _textPattern;
+
+    [ObservableProperty]
+    private bool _useOcrRegion;
+
+    [ObservableProperty]
+    private int _ocrRegionX;
+
+    [ObservableProperty]
+    private int _ocrRegionY;
+
+    [ObservableProperty]
+    private int _ocrRegionWidth;
+
+    [ObservableProperty]
+    private int _ocrRegionHeight;
+
+    [ObservableProperty]
+    private string? _requestUrl;
+
+    [ObservableProperty]
+    private string? _requestMethod;
+
+    [ObservableProperty]
+    private string? _requestBody;
+
+    [ObservableProperty]
+    private string? _responseVariableName;
+
+    [JsonIgnore]
+    public string ActionName => EventType switch
+    {
+        InputEventType.KeyDown => "按下按键",
+        InputEventType.KeyUp => "松开按键",
+        InputEventType.MouseDown => "按下鼠标",
+        InputEventType.MouseUp => "松开鼠标",
+        InputEventType.MouseMove => "移动鼠标",
+        InputEventType.MouseWheel => "滚动鼠标",
+        InputEventType.Delay => "等待",
+        InputEventType.ClipboardPaste => "填写变量",
+        InputEventType.ImageClick => "看到图片就点击",
+        InputEventType.WaitImage => "等待图片出现",
+        InputEventType.WaitText => "等待文字出现",
+        InputEventType.ClickText => "看到文字就点击",
+        InputEventType.ReadText => "读取屏幕文字",
+        InputEventType.ReadData => "读取数据",
+        InputEventType.SubmitData => "提交结果",
+        InputEventType.Notify => "完成后通知",
+        InputEventType.WaitWindow => "等待窗口",
+        InputEventType.ActivateWindow => "切换到窗口",
+        _ => EventType.ToString()
+    };
 
     [JsonIgnore]
     public string Details => EventType switch
@@ -84,15 +147,80 @@ public partial class InputEvent : ObservableObject
             ? $"鼠标释放: 按键{MouseButton} 窗口[{WindowTitle}] 相对({RelativeX}, {RelativeY})"
             : $"鼠标释放: 按键{MouseButton} ({X}, {Y})",
         InputEventType.MouseMove => UseWindowRelativeCoordinates
-            ? $"移动: 窗口[{WindowTitle}] 相对({RelativeX}, {RelativeY})"
-            : $"移动: ({X}, {Y})",
+            ? $"移动鼠标: 窗口[{WindowTitle}] 内 ({RelativeX}, {RelativeY})"
+            : $"移动鼠标: ({X}, {Y})",
         InputEventType.MouseWheel => $"滚轮: {WheelDelta}",
-        InputEventType.Delay => $"延迟: {DeltaMs}ms",
-        InputEventType.ClipboardPaste => $"粘贴变量: {VariableMarker}",
-        InputEventType.ImageClick => $"图片点击: {Path.GetFileName(ImagePath)} 阈值{MatchThreshold:0.00} 超时{TimeoutMs}ms",
-        InputEventType.WaitImage => $"等待图片: {Path.GetFileName(ImagePath)} 阈值{MatchThreshold:0.00} 超时{TimeoutMs}ms",
-        InputEventType.WaitWindow => $"等待窗口: {WindowTitle} 超时{TimeoutMs}ms",
-        InputEventType.ActivateWindow => $"激活窗口: {WindowTitle}",
+        InputEventType.Delay => $"等待: {DeltaMs}ms",
+        InputEventType.ClipboardPaste => $"填写变量: {VariableMarker}",
+        InputEventType.ImageClick => "找到图片后点击",
+        InputEventType.WaitImage => "等待图片出现",
+        InputEventType.WaitText => $"等待文字出现: {TextPattern}{OcrRegionText}",
+        InputEventType.ClickText => $"看到文字就点击: {TextPattern}{OcrRegionText}",
+        InputEventType.ReadText => $"读取屏幕文字，并复制到剪贴板{OcrRegionText}",
+        InputEventType.ReadData => $"读取数据: {RequestUrl}，保存为 {DisplayResponseVariableName}",
+        InputEventType.SubmitData => $"提交结果: {RequestUrl}，保存返回为 {DisplayResponseVariableName}",
+        InputEventType.Notify => $"完成后通知: {RequestUrl}",
+        InputEventType.WaitWindow => $"等待窗口: {WindowTitle}",
+        InputEventType.ActivateWindow => $"切换到窗口: {WindowTitle}",
         _ => EventType.ToString()
     };
+
+    private string OcrRegionText => UseOcrRegion
+        ? $"，只识别框选区域({OcrRegionWidth}x{OcrRegionHeight})"
+        : string.Empty;
+
+    private string DisplayResponseVariableName =>
+        string.IsNullOrWhiteSpace(ResponseVariableName) ? "返回数据" : ResponseVariableName;
+
+    [JsonIgnore]
+    public bool HasImage => EventType is InputEventType.ImageClick or InputEventType.WaitImage
+                            && !string.IsNullOrWhiteSpace(ImagePath);
+
+    [JsonIgnore]
+    public bool CanEditTimeout => EventType is InputEventType.ImageClick or InputEventType.WaitImage
+        or InputEventType.WaitText or InputEventType.ClickText
+        or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify
+        or InputEventType.WaitWindow;
+
+    [JsonIgnore]
+    public bool CanEditAfterFoundDelay => EventType == InputEventType.ImageClick;
+
+    [JsonIgnore]
+    public string TimeoutText => EventType switch
+    {
+        InputEventType.ImageClick or InputEventType.WaitImage or InputEventType.WaitText or InputEventType.ClickText
+            or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify or InputEventType.WaitWindow
+            => $"{TimeoutMs / 1000.0:0.#} 秒",
+        _ => string.Empty
+    };
+
+    [JsonIgnore]
+    public string AfterFoundDelayDisplayText => EventType == InputEventType.ImageClick
+        ? $"{AfterFoundDelayMs / 1000.0:0.#} 秒"
+        : string.Empty;
+
+    partial void OnEventTypeChanged(InputEventType value)
+    {
+        OnPropertyChanged(nameof(ActionName));
+        OnPropertyChanged(nameof(Details));
+        OnPropertyChanged(nameof(HasImage));
+        OnPropertyChanged(nameof(CanEditTimeout));
+        OnPropertyChanged(nameof(CanEditAfterFoundDelay));
+        OnPropertyChanged(nameof(TimeoutText));
+        OnPropertyChanged(nameof(AfterFoundDelayDisplayText));
+    }
+
+    partial void OnImagePathChanged(string? value) => OnPropertyChanged(nameof(HasImage));
+
+    partial void OnTimeoutMsChanged(int value)
+    {
+        OnPropertyChanged(nameof(Details));
+        OnPropertyChanged(nameof(TimeoutText));
+    }
+
+    partial void OnAfterFoundDelayMsChanged(int value)
+    {
+        OnPropertyChanged(nameof(Details));
+        OnPropertyChanged(nameof(AfterFoundDelayDisplayText));
+    }
 }
