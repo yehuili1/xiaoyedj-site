@@ -1,0 +1,127 @@
+<Window x:Class="AutoMacro.Views.MiniWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="全能脚本V2.2.0"
+        Width="380" Height="56"
+        ResizeMode="NoResize"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        Topmost="True"
+        ShowInTaskbar="False"
+        WindowStartupLocation="Manual"
+        MouseLeftButtonDown="Window_MouseLeftButtonDown">
+
+    <Window.Resources>
+        <Style x:Key="MiniBtn" TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="4" Padding="4">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#40FFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#60FFFFFF" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Border Background="#E0202020"
+            CornerRadius="8"
+            BorderBrush="#60FFFFFF"
+            BorderThickness="1"
+            Padding="10,6">
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 状态指示灯 -->
+            <Ellipse Grid.Column="0" Width="10" Height="10" Margin="0,0,8,0">
+                <Ellipse.Style>
+                    <Style TargetType="Ellipse">
+                        <Setter Property="Fill" Value="#4CAF50" />
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding IsRecording}" Value="True">
+                                <Setter Property="Fill" Value="#F44336" />
+                            </DataTrigger>
+                            <DataTrigger Binding="{Binding IsPlaying}" Value="True">
+                                <Setter Property="Fill" Value="#2196F3" />
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Ellipse.Style>
+            </Ellipse>
+
+            <!-- 方案名 + 状态文字 -->
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
+                <TextBlock Text="{Binding SelectedProfile.Name}"
+                           Foreground="#AAAAAA"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis"
+                           MaxWidth="120"
+                           Margin="0,0,6,0" />
+                <TextBlock Text="|" Foreground="#555555" FontSize="12" Margin="0,0,6,0" />
+                <TextBlock Text="{Binding StatusText}"
+                           Foreground="White"
+                           FontSize="12"
+                           TextTrimming="CharacterEllipsis" />
+            </StackPanel>
+
+            <!-- 录制按钮 -->
+            <Button Grid.Column="2"
+                    Command="{Binding ToggleRecordingCommand}"
+                    ToolTip="录制"
+                    Style="{StaticResource MiniBtn}"
+                    Margin="0,0,3,0">
+                <Ellipse Width="10" Height="10" Fill="#F44336" />
+            </Button>
+
+            <!-- 播放按钮 -->
+            <Button Grid.Column="3"
+                    Command="{Binding TogglePlaybackCommand}"
+                    ToolTip="播放"
+                    Style="{StaticResource MiniBtn}"
+                    Margin="0,0,3,0">
+                <Polygon Points="0,0 10,6 0,12" Fill="#2196F3" />
+            </Button>
+
+            <!-- 停止按钮 -->
+            <Button Grid.Column="4"
+                    Command="{Binding EmergencyStopCommand}"
+                    ToolTip="停止"
+                    Style="{StaticResource MiniBtn}"
+                    Margin="0,0,3,0">
+                <Rectangle Width="10" Height="10" Fill="#FF9800" />
+            </Button>
+
+            <!-- 还原按钮 -->
+            <Button Grid.Column="5"
+                    Click="Restore_Click"
+                    ToolTip="还原主窗口"
+                    Style="{StaticResource MiniBtn}">
+                <TextBlock Text="⬜" FontSize="11" Foreground="White" />
+            </Button>
+        </Grid>
+    </Border>
+</Window>

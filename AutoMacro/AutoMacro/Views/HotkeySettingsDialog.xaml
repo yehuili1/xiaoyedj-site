@@ -1,0 +1,125 @@
+<ui:FluentWindow
+    x:Class="AutoMacro.Views.HotkeySettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="快捷键设置"
+    Width="460" Height="560"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    Icon="/Assets/icon.ico">
+
+    <Grid Margin="20,40,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Text="自定义快捷键"
+                   FontSize="16" FontWeight="SemiBold" Foreground="White"
+                   Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="1"
+                   Text="点击输入框后按键组合，支持 Ctrl / Shift / Alt + 功能键"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   Margin="0,0,0,16" />
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="140" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="开始/停止录制:"
+                       VerticalAlignment="Center" Foreground="White" Margin="0,0,0,10" />
+            <ui:TextBox Grid.Row="0" Grid.Column="1" x:Name="TbRecord"
+                        IsReadOnly="True" PlaceholderText="点击后按键"
+                        PreviewKeyDown="HotkeyBox_PreviewKeyDown"
+                        GotFocus="HotkeyBox_GotFocus" Margin="0,0,4,10" />
+            <ui:Button Grid.Row="0" Grid.Column="2" Content="清除"
+                       Click="ClearHotkey_Click" Tag="TbRecord" Padding="8,4" Margin="0,0,0,10" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="暂停/继续录制:"
+                       VerticalAlignment="Center" Foreground="White" Margin="0,0,0,10" />
+            <ui:TextBox Grid.Row="1" Grid.Column="1" x:Name="TbPause"
+                        IsReadOnly="True" PlaceholderText="点击后按键"
+                        PreviewKeyDown="HotkeyBox_PreviewKeyDown"
+                        GotFocus="HotkeyBox_GotFocus" Margin="0,0,4,10" />
+            <ui:Button Grid.Row="1" Grid.Column="2" Content="清除"
+                       Click="ClearHotkey_Click" Tag="TbPause" Padding="8,4" Margin="0,0,0,10" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="紧急停止:"
+                       VerticalAlignment="Center" Foreground="White" Margin="0,0,0,10" />
+            <ui:TextBox Grid.Row="2" Grid.Column="1" x:Name="TbStop"
+                        IsReadOnly="True" PlaceholderText="点击后按键"
+                        PreviewKeyDown="HotkeyBox_PreviewKeyDown"
+                        GotFocus="HotkeyBox_GotFocus" Margin="0,0,4,10" />
+            <ui:Button Grid.Row="2" Grid.Column="2" Content="清除"
+                       Click="ClearHotkey_Click" Tag="TbStop" Padding="8,4" Margin="0,0,0,10" />
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="开始/停止回放:"
+                       VerticalAlignment="Center" Foreground="White" Margin="0,0,0,10" />
+            <ui:TextBox Grid.Row="3" Grid.Column="1" x:Name="TbPlayback"
+                        IsReadOnly="True" PlaceholderText="点击后按键"
+                        PreviewKeyDown="HotkeyBox_PreviewKeyDown"
+                        GotFocus="HotkeyBox_GotFocus" Margin="0,0,4,10" />
+            <ui:Button Grid.Row="3" Grid.Column="2" Content="清除"
+                       Click="ClearHotkey_Click" Tag="TbPlayback" Padding="8,4" Margin="0,0,0,10" />
+        </Grid>
+
+        <!-- Row 3: Profile Hotkeys -->
+        <StackPanel Grid.Row="3" Margin="0,8,0,0">
+            <TextBlock Text="方案快捷键" FontSize="14" FontWeight="SemiBold"
+                       Foreground="White" Margin="0,0,0,4" />
+            <TextBlock Text="为方案绑定快捷键，按下后直接启动该方案的回放"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       Margin="0,0,0,8" FontSize="12" />
+            <ScrollViewer MaxHeight="120" VerticalScrollBarVisibility="Auto">
+                <ItemsControl x:Name="ProfileHotkeyList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,0,0,6">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="{Binding ProfileName}"
+                                           VerticalAlignment="Center" Foreground="White" />
+                                <ui:TextBox Grid.Column="1" Text="{Binding Hotkey, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                            IsReadOnly="True"
+                                            PlaceholderText="点击后按键"
+                                            PreviewKeyDown="HotkeyBox_PreviewKeyDown"
+                                            GotFocus="HotkeyBox_GotFocus"
+                                            Margin="0,0,4,0" />
+                                <ui:Button Grid.Column="2" Content="清除"
+                                           Click="ClearProfileHotkey_Click"
+                                           Tag="{Binding}" Padding="8,4" />
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </StackPanel>
+
+        <!-- Row 4: Buttons (was Row 3) -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal"
+                    HorizontalAlignment="Right" Margin="0,16,0,0">
+            <ui:Button Content="取消" Click="Cancel_Click"
+                       Margin="0,0,8,0" MinWidth="80" />
+            <ui:Button Content="保存" Appearance="Primary"
+                       Click="Save_Click" MinWidth="80" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

@@ -1,0 +1,31 @@
+# Build outputs
+[Bb]in/
+[Oo]bj/
+
+# IDE and user-specific files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# NuGet/package artifacts
+packages/
+*.nupkg
+
+# Publish/package outputs
+publish*/
+AutoMacro/AutoMacro/publish*/
+*.zip
+
+# Runtime/user data
+*.log
+hotkey_settings.json
+Profiles/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
