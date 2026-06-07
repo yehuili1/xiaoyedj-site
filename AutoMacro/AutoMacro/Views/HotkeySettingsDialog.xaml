@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
     Title="快捷键设置"
-    Width="460" Height="560"
+    Width="460" Height="600"
     ResizeMode="NoResize"
     WindowStartupLocation="CenterOwner"
     ExtendsContentIntoTitleBar="True"
@@ -35,6 +35,7 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="Auto" />
@@ -76,6 +77,15 @@
                         GotFocus="HotkeyBox_GotFocus" Margin="0,0,4,10" />
             <ui:Button Grid.Row="3" Grid.Column="2" Content="清除"
                        Click="ClearHotkey_Click" Tag="TbPlayback" Padding="8,4" Margin="0,0,0,10" />
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="插入录制:"
+                       VerticalAlignment="Center" Foreground="White" Margin="0,0,0,10" />
+            <ui:TextBox Grid.Row="4" Grid.Column="1" x:Name="TbInsertRecording"
+                        IsReadOnly="True" PlaceholderText="点击后按键"
+                        PreviewKeyDown="HotkeyBox_PreviewKeyDown"
+                        GotFocus="HotkeyBox_GotFocus" Margin="0,0,4,10" />
+            <ui:Button Grid.Row="4" Grid.Column="2" Content="清除"
+                       Click="ClearHotkey_Click" Tag="TbInsertRecording" Padding="8,4" Margin="0,0,0,10" />
         </Grid>
 
         <!-- Row 3: Profile Hotkeys -->

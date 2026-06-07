@@ -9,6 +9,7 @@ public interface IHotkeyService
     event EventHandler? PauseRecordHotkeyPressed;
     event EventHandler? StopHotkeyPressed;
     event EventHandler? PlaybackHotkeyPressed;
+    event EventHandler? InsertRecordingHotkeyPressed;
     event EventHandler<string>? ProfilePlaybackRequested;
     void StartListening();
     void StopListening();

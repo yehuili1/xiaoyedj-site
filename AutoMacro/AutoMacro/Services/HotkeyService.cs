@@ -17,11 +17,13 @@ public class HotkeyService : IHotkeyService
     private HotkeyBinding _pauseBinding;
     private HotkeyBinding _stopBinding;
     private HotkeyBinding _playbackBinding;
+    private HotkeyBinding _insertRecordingBinding;
 
     public event EventHandler? RecordHotkeyPressed;
     public event EventHandler? PauseRecordHotkeyPressed;
     public event EventHandler? StopHotkeyPressed;
     public event EventHandler? PlaybackHotkeyPressed;
+    public event EventHandler? InsertRecordingHotkeyPressed;
     public event EventHandler<string>? ProfilePlaybackRequested;
 
     private Dictionary<string, HotkeyBinding> _profileBindings = new();
@@ -47,11 +49,15 @@ public class HotkeyService : IHotkeyService
         _pauseBinding = HotkeySettings.ParseHotkey(Settings.PauseRecording);
         _stopBinding = HotkeySettings.ParseHotkey(Settings.EmergencyStop);
         _playbackBinding = HotkeySettings.ParseHotkey(Settings.StartPlayback);
+        _insertRecordingBinding = HotkeySettings.ParseHotkey(Settings.InsertRecording);
+        if (string.Equals(Settings.InsertRecording, "F5", StringComparison.OrdinalIgnoreCase))
+            _insertRecordingBinding = HotkeyBinding.Empty;
 
         _suppressedKeys = new HashSet<KeyCode>
         {
             _recordBinding.Key, _pauseBinding.Key,
-            _stopBinding.Key, _playbackBinding.Key
+            _stopBinding.Key, _playbackBinding.Key,
+            _insertRecordingBinding.Key
         };
 
         // 解析方案快捷键
@@ -68,7 +74,7 @@ public class HotkeyService : IHotkeyService
 
         _suppressedKeys.Remove(KeyCode.VcUndefined);
         _logger.Info("Hotkey",
-            $"配置: record={Settings.StartStopRecording}, pause={Settings.PauseRecording}, stop={Settings.EmergencyStop}, playback={Settings.StartPlayback}, profileHotkeys={Settings.ProfileHotkeys.Count}");
+            $"配置: record={Settings.StartStopRecording}, pause={Settings.PauseRecording}, stop={Settings.EmergencyStop}, playback={Settings.StartPlayback}, insertRecording={Settings.InsertRecording}, profileHotkeys={Settings.ProfileHotkeys.Count}");
     }
 
     /// <summary>
@@ -82,6 +88,7 @@ public class HotkeyService : IHotkeyService
         if (Matches(_pauseBinding, key, mask)) return true;
         if (Matches(_stopBinding, key, mask)) return true;
         if (Matches(_playbackBinding, key, mask)) return true;
+        if (Matches(_insertRecordingBinding, key, mask)) return true;
 
         return _profileBindings.Values.Any(binding => Matches(binding, key, mask));
     }
@@ -146,6 +153,12 @@ public class HotkeyService : IHotkeyService
         {
             _logger.Info("Hotkey", $"触发回放快捷键: {Settings.StartPlayback}");
             PlaybackHotkeyPressed?.Invoke(this, EventArgs.Empty);
+            e.SuppressEvent = true;
+        }
+        else if (Matches(_insertRecordingBinding, key, mask))
+        {
+            _logger.Info("Hotkey", $"触发插入录制快捷键: {Settings.InsertRecording}");
+            InsertRecordingHotkeyPressed?.Invoke(this, EventArgs.Empty);
             e.SuppressEvent = true;
         }
         else

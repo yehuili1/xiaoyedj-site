@@ -17,7 +17,9 @@ public partial class ActionListViewModel : ObservableObject
     private readonly IImageRecognitionService _imageRecognitionService;
     private readonly IOcrService _ocrService;
     private readonly IApiClientService _apiClientService;
+    private readonly IRecordingService _recordingService;
     private RecordProfile? _currentProfile;
+    private SegmentRecordingDialog? _segmentRecordingDialog;
 
     [ObservableProperty]
     private ObservableCollection<InputEvent> _actions = new();
@@ -28,16 +30,21 @@ public partial class ActionListViewModel : ObservableObject
     [ObservableProperty]
     private int _selectedIndex = -1;
 
+    public bool IsRecordingSegment { get; private set; }
+    public bool IsInsertRecordingDialogOpen => _segmentRecordingDialog is not null;
+
     public ActionListViewModel(
         IProfileManager profileManager,
         IImageRecognitionService imageRecognitionService,
         IOcrService ocrService,
-        IApiClientService apiClientService)
+        IApiClientService apiClientService,
+        IRecordingService recordingService)
     {
         _profileManager = profileManager;
         _imageRecognitionService = imageRecognitionService;
         _ocrService = ocrService;
         _apiClientService = apiClientService;
+        _recordingService = recordingService;
     }
 
     public void LoadFromProfile(RecordProfile profile)
@@ -60,6 +67,112 @@ public partial class ActionListViewModel : ObservableObject
             Actions.Insert(SelectedIndex + 1, newEvent);
         else
             Actions.Add(newEvent);
+    }
+
+    [RelayCommand]
+    private void InsertRecording()
+    {
+        ShowInsertRecordingDialog();
+    }
+
+    public void HandleInsertRecordingHotkey()
+    {
+        if (_segmentRecordingDialog is not null)
+        {
+            _segmentRecordingDialog.TriggerHotkey();
+            return;
+        }
+
+        ShowInsertRecordingDialog();
+    }
+
+    private void ShowInsertRecordingDialog()
+    {
+        if (_recordingService.IsRecording)
+        {
+            System.Windows.MessageBox.Show(
+                "当前已经在录制中，请先停止录制。",
+                "插入录制",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        var insertIndex = SelectedIndex >= 0 && SelectedIndex < Actions.Count
+            ? SelectedIndex + 1
+            : Actions.Count;
+
+        var dialog = new SegmentRecordingDialog
+        {
+            Owner = Application.Current.MainWindow
+        };
+        _segmentRecordingDialog = dialog;
+
+        var started = false;
+        dialog.StartRequested += (_, _) =>
+        {
+            IsRecordingSegment = true;
+            _recordingService.StartRecording();
+            started = true;
+        };
+        dialog.StopRequested += (_, _) =>
+        {
+            if (_recordingService.IsRecording)
+                _recordingService.StopRecording();
+        };
+
+        bool? result;
+        try
+        {
+            result = dialog.ShowDialog();
+        }
+        finally
+        {
+            _segmentRecordingDialog = null;
+            if (_recordingService.IsRecording)
+                _recordingService.StopRecording();
+
+            IsRecordingSegment = false;
+        }
+
+        if (result != true || !started)
+            return;
+
+        var recorded = TrimOwnAppEvents(_recordingService.GetRecordedEvents()).ToList();
+        if (recorded.Count == 0)
+        {
+            System.Windows.MessageBox.Show(
+                "没有录到鼠标或键盘动作。",
+                "插入录制",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        var delaySeconds = PromptNumber("插入录制", "延迟执行时间：等多少秒后开始执行这段录制？", 1);
+        if (delaySeconds is null) return;
+
+        var timeoutSeconds = PromptNumber("插入录制", "超时时间：最长允许这段录制执行多少秒？", 10);
+        if (timeoutSeconds is null) return;
+
+        var segment = new InputEvent
+        {
+            EventType = InputEventType.RecordedSegment,
+            DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600),
+            TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600),
+            RecordedEvents = recorded
+        };
+
+        Actions.Insert(insertIndex, segment);
+
+        SelectedIndex = insertIndex;
+        SelectedAction = segment;
+
+        System.Windows.MessageBox.Show(
+            $"已插入 1 条鼠标键盘录制任务。\n里面包含 {recorded.Count} 个动作。\n\n记得点击“全局保存”。",
+            "插入录制完成",
+            System.Windows.MessageBoxButton.OK,
+            System.Windows.MessageBoxImage.Information);
     }
 
     [RelayCommand]
@@ -97,6 +210,32 @@ public partial class ActionListViewModel : ObservableObject
             TextPattern = normalized,
             DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600),
             TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600)
+        };
+
+        InsertAction(action);
+        SelectedAction = action;
+        SelectedIndex = Actions.IndexOf(action);
+    }
+
+    [RelayCommand]
+    private void AddPasteText()
+    {
+        var dialog = new PasteTextDialog
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.TextContent))
+            return;
+
+        var delaySeconds = PromptNumber("插入文字", "延迟执行时间：等多少秒后粘贴文字？", 1);
+        if (delaySeconds is null) return;
+
+        var action = new InputEvent
+        {
+            EventType = InputEventType.PasteText,
+            TextPattern = dialog.TextContent,
+            DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600)
         };
 
         InsertAction(action);
@@ -235,17 +374,18 @@ public partial class ActionListViewModel : ObservableObject
             return;
         }
 
-        if (SelectedAction.EventType == InputEventType.KeyCombo)
+        if (SelectedAction.EventType is InputEventType.KeyCombo or InputEventType.RecordedSegment)
         {
+            var isSegment = SelectedAction.EventType == InputEventType.RecordedSegment;
             var delaySeconds = PromptNumber(
                 "时间设置",
-                "延迟多少秒后执行按键：",
+                isSegment ? "延迟多少秒后开始执行这段录制？" : "延迟多少秒后执行按键：",
                 Math.Max(0, SelectedAction.DeltaMs / 1000.0));
             if (delaySeconds is null) return;
 
             var timeoutSeconds = PromptNumber(
                 "时间设置",
-                "最长允许这个按键操作执行多少秒：",
+                isSegment ? "最长允许这段录制执行多少秒？" : "最长允许这个按键操作执行多少秒：",
                 Math.Max(1, SelectedAction.TimeoutMs / 1000.0));
             if (timeoutSeconds is null) return;
 
@@ -300,10 +440,16 @@ public partial class ActionListViewModel : ObservableObject
         SelectedAction = action;
         SelectedIndex = Actions.IndexOf(action);
 
-        var prompt = action.EventType == InputEventType.KeyCombo
-            ? "延迟时间：等多少秒后执行按键？"
-            : "延迟时间：图片出现后，等多少秒再点击？";
-        var defaultValue = action.EventType == InputEventType.KeyCombo
+        var usesDeltaDelay = action.EventType is InputEventType.KeyCombo or InputEventType.RecordedSegment
+            or InputEventType.PasteText;
+        var prompt = action.EventType switch
+        {
+            InputEventType.KeyCombo => "延迟时间：等多少秒后执行按键？",
+            InputEventType.RecordedSegment => "延迟时间：等多少秒后开始执行这段录制？",
+            InputEventType.PasteText => "延迟时间：等多少秒后粘贴文字？",
+            _ => "延迟时间：图片出现后，等多少秒再点击？"
+        };
+        var defaultValue = usesDeltaDelay
             ? Math.Max(0, action.DeltaMs / 1000.0)
             : Math.Max(0, action.AfterFoundDelayMs / 1000.0);
         var delaySeconds = PromptNumber(
@@ -312,7 +458,7 @@ public partial class ActionListViewModel : ObservableObject
             defaultValue);
         if (delaySeconds is null) return;
 
-        if (action.EventType == InputEventType.KeyCombo)
+        if (usesDeltaDelay)
             action.DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
         else
             action.AfterFoundDelayMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
@@ -669,6 +815,21 @@ public partial class ActionListViewModel : ObservableObject
         SelectedAction = Actions[SelectedIndex];
     }
 
+    public void MoveAction(InputEvent action, int newIndex)
+    {
+        var oldIndex = Actions.IndexOf(action);
+        if (oldIndex < 0 || Actions.Count == 0)
+            return;
+
+        newIndex = Math.Clamp(newIndex, 0, Actions.Count - 1);
+        if (oldIndex == newIndex)
+            return;
+
+        Actions.Move(oldIndex, newIndex);
+        SelectedAction = action;
+        SelectedIndex = newIndex;
+    }
+
     [RelayCommand]
     private void ClearAll()
     {
@@ -784,6 +945,34 @@ public partial class ActionListViewModel : ObservableObject
         return action.UseOcrRegion && action.OcrRegionWidth > 0 && action.OcrRegionHeight > 0
             ? new OcrRegion(action.OcrRegionX, action.OcrRegionY, action.OcrRegionWidth, action.OcrRegionHeight)
             : null;
+    }
+
+    private static IEnumerable<InputEvent> TrimOwnAppEvents(IList<InputEvent> events)
+    {
+        var start = 0;
+        var end = events.Count - 1;
+
+        while (start <= end && IsOwnAppMouseEvent(events[start]))
+            start++;
+
+        while (end >= start && IsOwnAppMouseEvent(events[end]))
+            end--;
+
+        for (var i = start; i <= end; i++)
+            yield return events[i];
+    }
+
+    private static bool IsOwnAppMouseEvent(InputEvent evt)
+    {
+        if (evt.EventType is not (InputEventType.MouseDown or InputEventType.MouseUp or
+            InputEventType.MouseMove or InputEventType.MouseWheel))
+            return false;
+
+        var processName = evt.WindowProcessName ?? string.Empty;
+        var title = evt.WindowTitle ?? string.Empty;
+        return processName.Contains("全能脚本", StringComparison.OrdinalIgnoreCase) ||
+               title.Contains("全能脚本", StringComparison.OrdinalIgnoreCase) ||
+               title.Contains("片段录制", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string PromptText(string title, string prompt, string defaultValue = "")

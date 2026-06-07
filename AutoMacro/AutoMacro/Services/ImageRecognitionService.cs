@@ -1,6 +1,9 @@
 using System.IO;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Drawing.Drawing2D;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using OpenCvSharp;
 using DrawingPoint = System.Drawing.Point;
 using WinForms = System.Windows.Forms;
@@ -17,6 +20,29 @@ public class ImageRecognitionService : IImageRecognitionService
     public ImageRecognitionService(IRunLogger logger)
     {
         _logger = logger;
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out WindowRect rect);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 
     public async Task<(bool Found, int X, int Y, double Score)> FindImageAsync(
@@ -114,7 +140,47 @@ public class ImageRecognitionService : IImageRecognitionService
         var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size);
+        MaskOwnWindows(graphics, bounds.Left, bounds.Top, bounds.Width, bounds.Height);
         return new ScreenCapture(bitmap, bounds.Left, bounds.Top);
+    }
+
+    private static void MaskOwnWindows(Graphics graphics, int screenLeft, int screenTop, int screenWidth, int screenHeight)
+    {
+        var currentProcessId = (uint)Process.GetCurrentProcess().Id;
+        var screenRect = new Rectangle(screenLeft, screenTop, screenWidth, screenHeight);
+        using var brush = new HatchBrush(
+            HatchStyle.WideDownwardDiagonal,
+            Color.FromArgb(255, 255, 0, 255),
+            Color.FromArgb(255, 0, 255, 0));
+
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle))
+                return true;
+
+            GetWindowThreadProcessId(handle, out var processId);
+            if (processId != currentProcessId)
+                return true;
+
+            if (!GetWindowRect(handle, out var rect))
+                return true;
+
+            var windowRect = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+            if (windowRect.Width < 20 || windowRect.Height < 20)
+                return true;
+
+            var clipped = Rectangle.Intersect(screenRect, windowRect);
+            if (clipped.IsEmpty)
+                return true;
+
+            var local = new Rectangle(
+                clipped.Left - screenLeft,
+                clipped.Top - screenTop,
+                clipped.Width,
+                clipped.Height);
+            graphics.FillRectangle(brush, local);
+            return true;
+        }, IntPtr.Zero);
     }
 
     private (bool Found, int X, int Y, double Score) FindWithOpenCv(

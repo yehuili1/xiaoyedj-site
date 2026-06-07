@@ -370,6 +370,9 @@ public class ProfileManager : IProfileManager
         {
             if (!string.IsNullOrWhiteSpace(evt.ImagePath) && !Path.IsPathRooted(evt.ImagePath))
                 evt.ImagePath = Path.Combine(profile.FolderPath, evt.ImagePath);
+
+            if (evt.RecordedEvents is { Count: > 0 })
+                NormalizeLoadedAssetPaths(profile, evt.RecordedEvents);
         }
     }
 
@@ -410,8 +413,14 @@ public class ProfileManager : IProfileManager
             RequestUrl = evt.RequestUrl,
             RequestMethod = evt.RequestMethod,
             RequestBody = evt.RequestBody,
-            ResponseVariableName = evt.ResponseVariableName
+            ResponseVariableName = evt.ResponseVariableName,
+            RecordedEvents = CloneRecordedEventsForSave(profile, evt.RecordedEvents)
         };
+    }
+
+    private static List<InputEvent>? CloneRecordedEventsForSave(RecordProfile profile, IEnumerable<InputEvent>? events)
+    {
+        return events?.Select(evt => CloneForSave(profile, evt)).ToList();
     }
 
     private static string? ToProfileRelativePath(RecordProfile profile, string? path)
@@ -470,7 +479,7 @@ public class ProfileManager : IProfileManager
             var copiedExternalImages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var changed = false;
 
-            foreach (var evt in events)
+            foreach (var evt in EnumerateEventsDeep(events))
             {
                 var bundledPath = BundleImageForExport(
                     evt.ImagePath,
@@ -493,6 +502,20 @@ public class ProfileManager : IProfileManager
         catch
         {
             // 导出不能因为某个旧 record.json 格式异常就中断；原文件仍会随方案一起打包。
+        }
+    }
+
+    private static IEnumerable<InputEvent> EnumerateEventsDeep(IEnumerable<InputEvent> events)
+    {
+        foreach (var evt in events)
+        {
+            yield return evt;
+
+            if (evt.RecordedEvents is null)
+                continue;
+
+            foreach (var child in EnumerateEventsDeep(evt.RecordedEvents))
+                yield return child;
         }
     }
 

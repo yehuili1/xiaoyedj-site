@@ -1,0 +1,61 @@
+<ui:FluentWindow
+    x:Class="AutoMacro.Views.PasteTextDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="插入文字"
+    Width="520"
+    Height="420"
+    MinWidth="420"
+    MinHeight="320"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    Icon="/Assets/icon.ico">
+
+    <Grid Margin="20,42,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="提前填好要粘贴的文字"
+                   FontSize="18"
+                   FontWeight="SemiBold"
+                   Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="1"
+                   Text="脚本执行到这一步时，会自动把下面的内容粘贴到当前输入框。"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,12" />
+
+        <TextBox Grid.Row="2"
+                 x:Name="TextContentBox"
+                 AcceptsReturn="True"
+                 AcceptsTab="True"
+                 TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto"
+                 HorizontalScrollBarVisibility="Disabled"
+                 FontSize="14"
+                 Padding="10"
+                 MinHeight="180" />
+
+        <StackPanel Grid.Row="3"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <ui:Button Content="取消"
+                       Click="Cancel_Click"
+                       Margin="0,0,8,0"
+                       MinWidth="80" />
+            <ui:Button x:Name="ConfirmButton"
+                       Content="确定"
+                       Appearance="Primary"
+                       Click="Confirm_Click"
+                       MinWidth="80" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>

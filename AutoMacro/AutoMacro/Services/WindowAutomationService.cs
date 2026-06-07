@@ -88,10 +88,11 @@ public class WindowAutomationService : IWindowAutomationService
         if (!evt.UseWindowRelativeCoordinates || string.IsNullOrWhiteSpace(evt.WindowTitle))
             return false;
 
-        var snapshot = FindWindow(evt.WindowTitle, evt.WindowProcessName);
+        var snapshot = FindWindow(evt.WindowTitle, evt.WindowProcessName, allowProcessFallback: false)
+                       ?? FindWindow(null, evt.WindowProcessName, allowProcessFallback: true, requireUniqueProcessFallback: true);
         if (snapshot is null)
         {
-            _logger.Warn("Window", $"未找到录制窗口，使用绝对坐标: \"{evt.WindowTitle}\" ({evt.X}, {evt.Y})");
+            _logger.Warn("Window", $"未找到唯一录制窗口，使用绝对坐标: title=\"{evt.WindowTitle}\", process=\"{evt.WindowProcessName}\", ({evt.X}, {evt.Y})");
             return false;
         }
 
@@ -157,12 +158,18 @@ public class WindowAutomationService : IWindowAutomationService
         return false;
     }
 
-    private WindowSnapshot? FindWindow(string? titleKeyword, string? processName = null)
+    private WindowSnapshot? FindWindow(
+        string? titleKeyword,
+        string? processName = null,
+        bool allowProcessFallback = true,
+        bool requireUniqueProcessFallback = false)
     {
-        WindowSnapshot? match = null;
-        WindowSnapshot? processFallback = null;
+        var exactTitleMatches = new List<WindowSnapshot>();
+        var stableTitleMatches = new List<WindowSnapshot>();
+        var processMatches = new List<WindowSnapshot>();
         var keyword = titleKeyword?.Trim() ?? "";
         var processKeyword = processName?.Trim() ?? "";
+        var stableKeyword = GetStableTitleKeyword(keyword);
         if (string.IsNullOrWhiteSpace(keyword) && string.IsNullOrWhiteSpace(processKeyword))
             return null;
 
@@ -172,25 +179,94 @@ public class WindowAutomationService : IWindowAutomationService
                 return true;
 
             var snapshot = CreateSnapshot(handle);
-            if (snapshot is not null &&
+            if (snapshot is null || !IsUsableWindow(snapshot))
+                return true;
+
+            if (!string.IsNullOrWhiteSpace(keyword) &&
                 snapshot.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             {
-                match = snapshot;
-                return false;
+                exactTitleMatches.Add(snapshot);
+                return true;
             }
 
-            if (processFallback is null &&
+            if (!string.IsNullOrWhiteSpace(stableKeyword) &&
+                snapshot.Title.Contains(stableKeyword, StringComparison.OrdinalIgnoreCase))
+            {
+                stableTitleMatches.Add(snapshot);
+                return true;
+            }
+
+            if (allowProcessFallback &&
                 !string.IsNullOrWhiteSpace(processKeyword) &&
-                snapshot is not null &&
                 snapshot.ProcessName.Equals(processKeyword, StringComparison.OrdinalIgnoreCase))
             {
-                processFallback = snapshot;
+                processMatches.Add(snapshot);
             }
 
             return true;
         }, IntPtr.Zero);
 
-        return match ?? processFallback;
+        var exactTitleMatch = ChooseWindowMatch(exactTitleMatches, processKeyword, requireUnique: false);
+        if (exactTitleMatch is not null)
+            return exactTitleMatch;
+
+        var stableTitleMatch = ChooseWindowMatch(stableTitleMatches, processKeyword, requireUnique: true);
+        if (stableTitleMatch is not null)
+            return stableTitleMatch;
+
+        if (!allowProcessFallback || processMatches.Count == 0)
+            return null;
+
+        return ChooseWindowMatch(processMatches, processKeyword, requireUniqueProcessFallback);
+    }
+
+    private static WindowSnapshot? ChooseWindowMatch(
+        IReadOnlyList<WindowSnapshot> matches,
+        string processKeyword,
+        bool requireUnique)
+    {
+        if (matches.Count == 0)
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(processKeyword))
+        {
+            var processMatches = matches
+                .Where(m => m.ProcessName.Equals(processKeyword, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (processMatches.Count == 1)
+                return processMatches[0];
+
+            if (processMatches.Count > 1)
+                return requireUnique ? null : processMatches[0];
+        }
+
+        if (matches.Count == 1)
+            return matches[0];
+
+        return requireUnique ? null : matches[0];
+    }
+
+    private static bool IsUsableWindow(WindowSnapshot snapshot)
+    {
+        return snapshot.Left > -30000 &&
+               snapshot.Top > -30000 &&
+               snapshot.Width >= 80 &&
+               snapshot.Height >= 80;
+    }
+
+    private static string GetStableTitleKeyword(string title)
+    {
+        var trimmed = title.Trim();
+        if (trimmed.Length == 0)
+            return string.Empty;
+
+        var end = trimmed.Length;
+        while (end > 0 && char.IsDigit(trimmed[end - 1]))
+            end--;
+
+        var stable = trimmed[..end].Trim();
+        return stable.Length >= 2 ? stable : string.Empty;
     }
 
     private static WindowSnapshot? CreateSnapshot(IntPtr handle)
@@ -247,11 +323,18 @@ public class WindowAutomationService : IWindowAutomationService
         if (recordedSize <= 0)
             return recordedCoordinate;
 
+        var startDistance = recordedCoordinate;
         var endDistance = recordedSize - recordedCoordinate;
-        if (endDistance <= GetHorizontalRightBand(recordedSize))
+        var edgeBand = GetEdgeBand(recordedSize);
+
+        if (startDistance <= edgeBand && endDistance > edgeBand)
+            return ClampCoordinate(startDistance, currentSize);
+
+        if (endDistance <= edgeBand && startDistance > edgeBand)
             return ClampCoordinate(currentSize - endDistance, currentSize);
 
-        return ClampCoordinate(recordedCoordinate, currentSize);
+        var ratio = recordedCoordinate / (double)recordedSize;
+        return ClampCoordinate((int)Math.Round(Math.Clamp(ratio, 0, 1) * currentSize), currentSize);
     }
 
     private static int ResolveVerticalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
@@ -271,11 +354,6 @@ public class WindowAutomationService : IWindowAutomationService
 
         var ratio = recordedCoordinate / (double)recordedSize;
         return ClampCoordinate((int)Math.Round(Math.Clamp(ratio, 0, 1) * currentSize), currentSize);
-    }
-
-    private static int GetHorizontalRightBand(int recordedSize)
-    {
-        return (int)Math.Round(Math.Clamp(recordedSize * 0.33, 160, 460));
     }
 
     private static int GetEdgeBand(int recordedSize)

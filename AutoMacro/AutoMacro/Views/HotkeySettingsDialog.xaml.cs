@@ -32,6 +32,7 @@ public partial class HotkeySettingsDialog : FluentWindow
         TbPause.Text = current.PauseRecording;
         TbStop.Text = current.EmergencyStop;
         TbPlayback.Text = current.StartPlayback;
+        TbInsertRecording.Text = current.InsertRecording;
 
         // 填充方案快捷键列表
         foreach (var name in profileNames)
@@ -158,7 +159,8 @@ public partial class HotkeySettingsDialog : FluentWindow
             TbRecord.Text?.Trim(),
             TbPause.Text?.Trim(),
             TbStop.Text?.Trim(),
-            TbPlayback.Text?.Trim()
+            TbPlayback.Text?.Trim(),
+            TbInsertRecording.Text?.Trim()
         };
 
         // 验证非空的快捷键是否合法
@@ -218,6 +220,7 @@ public partial class HotkeySettingsDialog : FluentWindow
             PauseRecording = selected[1] ?? "",
             EmergencyStop = selected[2] ?? "",
             StartPlayback = selected[3] ?? "",
+            InsertRecording = selected[4] ?? "",
             ProfileHotkeys = profileHotkeys
         };
 

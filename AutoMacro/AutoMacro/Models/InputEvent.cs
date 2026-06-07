@@ -26,7 +26,9 @@ public enum InputEventType
     SubmitData,
     Notify,
     WaitWindow,
-    ActivateWindow
+    ActivateWindow,
+    RecordedSegment,
+    PasteText
 }
 
 public partial class InputEvent : ObservableObject
@@ -133,6 +135,13 @@ public partial class InputEvent : ObservableObject
     [ObservableProperty]
     private string? _responseVariableName;
 
+    [ObservableProperty]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    private List<InputEvent>? _recordedEvents;
+
+    [JsonIgnore]
+    public int RecordedEventCount => RecordedEvents?.Count ?? 0;
+
     [JsonIgnore]
     public string ActionName => EventType switch
     {
@@ -155,6 +164,8 @@ public partial class InputEvent : ObservableObject
         InputEventType.Notify => "完成后通知",
         InputEventType.WaitWindow => "等待窗口",
         InputEventType.ActivateWindow => "切换到窗口",
+        InputEventType.RecordedSegment => "鼠标键盘录制",
+        InputEventType.PasteText => $"插入文字: {PreviewText(TextPattern)}",
         _ => EventType.ToString()
     };
 
@@ -186,6 +197,8 @@ public partial class InputEvent : ObservableObject
         InputEventType.Notify => $"完成后通知: {RequestUrl}",
         InputEventType.WaitWindow => $"等待窗口: {WindowTitle}",
         InputEventType.ActivateWindow => $"切换到窗口: {WindowTitle}",
+        InputEventType.RecordedSegment => $"录制片段: {RecordedEventCount} 个动作",
+        InputEventType.PasteText => $"粘贴文字: {PreviewText(TextPattern)}",
         _ => EventType.ToString()
     };
 
@@ -204,17 +217,18 @@ public partial class InputEvent : ObservableObject
     public bool CanEditTimeout => EventType is InputEventType.ImageClick or InputEventType.WaitImage
         or InputEventType.WaitText or InputEventType.ClickText
         or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify
-        or InputEventType.WaitWindow or InputEventType.KeyCombo;
+        or InputEventType.WaitWindow or InputEventType.KeyCombo or InputEventType.RecordedSegment;
 
     [JsonIgnore]
-    public bool CanEditAfterFoundDelay => EventType is InputEventType.ImageClick or InputEventType.KeyCombo;
+    public bool CanEditAfterFoundDelay => EventType is InputEventType.ImageClick or InputEventType.KeyCombo
+        or InputEventType.RecordedSegment or InputEventType.PasteText;
 
     [JsonIgnore]
     public string TimeoutText => EventType switch
     {
         InputEventType.ImageClick or InputEventType.WaitImage or InputEventType.WaitText or InputEventType.ClickText
             or InputEventType.ReadData or InputEventType.SubmitData or InputEventType.Notify or InputEventType.WaitWindow
-            or InputEventType.KeyCombo
+            or InputEventType.KeyCombo or InputEventType.RecordedSegment
             => $"{TimeoutMs / 1000.0:0.#} 秒",
         _ => string.Empty
     };
@@ -223,9 +237,18 @@ public partial class InputEvent : ObservableObject
     public string AfterFoundDelayDisplayText => EventType switch
     {
         InputEventType.ImageClick => $"{AfterFoundDelayMs / 1000.0:0.#} 秒",
-        InputEventType.KeyCombo => $"{DeltaMs / 1000.0:0.#} 秒",
+        InputEventType.KeyCombo or InputEventType.RecordedSegment or InputEventType.PasteText => $"{DeltaMs / 1000.0:0.#} 秒",
         _ => string.Empty
     };
+
+    private static string PreviewText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "空";
+
+        var singleLine = text.Replace("\r", " ").Replace("\n", " ").Trim();
+        return singleLine.Length <= 24 ? singleLine : $"{singleLine[..24]}...";
+    }
 
     partial void OnEventTypeChanged(InputEventType value)
     {
@@ -262,5 +285,11 @@ public partial class InputEvent : ObservableObject
     {
         OnPropertyChanged(nameof(Details));
         OnPropertyChanged(nameof(AfterFoundDelayDisplayText));
+    }
+
+    partial void OnRecordedEventsChanged(List<InputEvent>? value)
+    {
+        OnPropertyChanged(nameof(RecordedEventCount));
+        OnPropertyChanged(nameof(Details));
     }
 }

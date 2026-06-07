@@ -19,6 +19,7 @@ public class HotkeySettings
     public string PauseRecording { get; set; } = "F8";
     public string EmergencyStop { get; set; } = "F11";
     public string StartPlayback { get; set; } = "F12";
+    public string InsertRecording { get; set; } = "";
 
     /// <summary>
     /// 方案专属快捷键：方案名 → 快捷键字符串（如 "Ctrl+F1"）
@@ -49,7 +50,15 @@ public class HotkeySettings
         }
 
         var json = File.ReadAllText(SettingsFilePath);
-        return JsonSerializer.Deserialize<HotkeySettings>(json, JsonOptions) ?? new HotkeySettings();
+        var settings = JsonSerializer.Deserialize<HotkeySettings>(json, JsonOptions) ?? new HotkeySettings();
+
+        if (string.Equals(settings.InsertRecording, "F5", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.InsertRecording = "";
+            settings.Save();
+        }
+
+        return settings;
     }
 
     /// <summary>

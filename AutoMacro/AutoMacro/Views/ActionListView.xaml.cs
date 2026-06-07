@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -12,6 +13,11 @@ namespace AutoMacro.Views;
 
 public partial class ActionListView : UserControl
 {
+    private System.Windows.Point? _dragStartPoint;
+    private InputEvent? _draggedAction;
+    private bool _isRowDragging;
+    private int _pendingDropIndex = -1;
+
     public ActionListView()
     {
         InitializeComponent();
@@ -41,6 +47,73 @@ public partial class ActionListView : UserControl
         row.IsSelected = true;
         row.Focus();
         ActionDataGrid.SelectedItem = row.Item;
+    }
+
+    private void ActionDataGrid_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        EndRowDrag(releaseCapture: false);
+
+        var source = e.OriginalSource as DependencyObject;
+        if (FindVisualParent<System.Windows.Controls.Primitives.ButtonBase>(source) is not null ||
+            FindVisualParent<System.Windows.Controls.Primitives.ScrollBar>(source) is not null ||
+            FindVisualParent<DataGridColumnHeader>(source) is not null)
+        {
+            _dragStartPoint = null;
+            _draggedAction = null;
+            return;
+        }
+
+        var row = FindVisualParent<DataGridRow>(source);
+        if (row?.Item is not InputEvent action)
+        {
+            _dragStartPoint = null;
+            _draggedAction = null;
+            return;
+        }
+
+        _dragStartPoint = e.GetPosition(ActionDataGrid);
+        _draggedAction = action;
+        row.IsSelected = true;
+        row.Focus();
+        ActionDataGrid.SelectedItem = action;
+    }
+
+    private void ActionDataGrid_PreviewMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (e.LeftButton != MouseButtonState.Pressed || _dragStartPoint is null || _draggedAction is null)
+            return;
+
+        var currentPoint = e.GetPosition(ActionDataGrid);
+        if (!_isRowDragging)
+        {
+            if (Math.Abs(currentPoint.X - _dragStartPoint.Value.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(currentPoint.Y - _dragStartPoint.Value.Y) < SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+
+            _isRowDragging = true;
+            ActionDataGrid.CaptureMouse();
+        }
+
+        UpdateDropIndicator(currentPoint);
+        e.Handled = true;
+    }
+
+    private void ActionDataGrid_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_isRowDragging)
+        {
+            CommitRowDrag();
+            e.Handled = true;
+        }
+
+        EndRowDrag(releaseCapture: true);
+    }
+
+    private void ActionDataGrid_LostMouseCapture(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        EndRowDrag(releaseCapture: false);
     }
 
     private void DeleteStepMenuItem_Click(object sender, RoutedEventArgs e)
@@ -94,5 +167,150 @@ public partial class ActionListView : UserControl
         };
 
         previewWindow.ShowDialog();
+    }
+
+    private void UpdateDropIndicator(System.Windows.Point point)
+    {
+        if (DataContext is not ActionListViewModel viewModel || _draggedAction is null)
+            return;
+
+        var insertionIndex = ResolveInsertionIndex(point, viewModel);
+        if (insertionIndex < 0)
+        {
+            HideDropIndicator();
+            return;
+        }
+
+        _pendingDropIndex = insertionIndex;
+        ShowDropIndicator(insertionIndex, viewModel.Actions.Count);
+    }
+
+    private void CommitRowDrag()
+    {
+        if (DataContext is not ActionListViewModel viewModel ||
+            _draggedAction is null ||
+            _pendingDropIndex < 0)
+        {
+            return;
+        }
+
+        var oldIndex = viewModel.Actions.IndexOf(_draggedAction);
+        if (oldIndex < 0)
+            return;
+
+        var targetIndex = _pendingDropIndex > oldIndex
+            ? _pendingDropIndex - 1
+            : _pendingDropIndex;
+
+        targetIndex = Math.Clamp(targetIndex, 0, Math.Max(0, viewModel.Actions.Count - 1));
+        if (targetIndex != oldIndex)
+            viewModel.MoveAction(_draggedAction, targetIndex);
+
+        RefreshRowHeaders();
+    }
+
+    private int ResolveInsertionIndex(System.Windows.Point point, ActionListViewModel viewModel)
+    {
+        var targetRow = GetRowAtPoint(point);
+        if (targetRow?.Item is not InputEvent targetAction)
+        {
+            return point.Y < 0
+                ? 0
+                : viewModel.Actions.Count;
+        }
+
+        var targetIndex = viewModel.Actions.IndexOf(targetAction);
+        if (targetIndex < 0)
+            return -1;
+
+        var rowTop = targetRow.TransformToAncestor(ActionDataGrid).Transform(new System.Windows.Point(0, 0)).Y;
+        if (point.Y > rowTop + targetRow.ActualHeight / 2)
+            targetIndex++;
+
+        return Math.Clamp(targetIndex, 0, viewModel.Actions.Count);
+    }
+
+    private DataGridRow? GetRowAtPoint(System.Windows.Point point)
+    {
+        var hit = VisualTreeHelper.HitTest(ActionDataGrid, point)?.VisualHit;
+        return FindVisualParent<DataGridRow>(hit);
+    }
+
+    private void RefreshRowHeaders()
+    {
+        for (var i = 0; i < ActionDataGrid.Items.Count; i++)
+        {
+            if (ActionDataGrid.ItemContainerGenerator.ContainerFromIndex(i) is DataGridRow row)
+                row.Header = (i + 1).ToString();
+        }
+    }
+
+    private void ShowDropIndicator(int insertionIndex, int itemCount)
+    {
+        var y = GetDropIndicatorY(insertionIndex, itemCount);
+        if (y is null)
+        {
+            HideDropIndicator();
+            return;
+        }
+
+        DropIndicator.Margin = new Thickness(0, Math.Max(0, y.Value - 1), 0, 0);
+        DropIndicator.Visibility = Visibility.Visible;
+    }
+
+    private double? GetDropIndicatorY(int insertionIndex, int itemCount)
+    {
+        if (itemCount <= 0)
+            return null;
+
+        if (insertionIndex <= 0)
+            return GetRowEdgeY(0, bottom: false);
+
+        if (insertionIndex >= itemCount)
+            return GetRowEdgeY(itemCount - 1, bottom: true);
+
+        return GetRowEdgeY(insertionIndex, bottom: false);
+    }
+
+    private double? GetRowEdgeY(int rowIndex, bool bottom)
+    {
+        if (ActionDataGrid.ItemContainerGenerator.ContainerFromIndex(rowIndex) is not DataGridRow row)
+            return null;
+
+        var y = row.TransformToAncestor(ActionGridHost).Transform(new System.Windows.Point(0, 0)).Y;
+        return bottom ? y + row.ActualHeight : y;
+    }
+
+    private void HideDropIndicator()
+    {
+        DropIndicator.Visibility = Visibility.Collapsed;
+        _pendingDropIndex = -1;
+    }
+
+    private void EndRowDrag(bool releaseCapture)
+    {
+        _dragStartPoint = null;
+        _draggedAction = null;
+        _isRowDragging = false;
+        HideDropIndicator();
+
+        if (releaseCapture && ActionDataGrid.IsMouseCaptured)
+            ActionDataGrid.ReleaseMouseCapture();
+
+        RefreshRowHeaders();
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject? child)
+        where T : DependencyObject
+    {
+        while (child is not null)
+        {
+            if (child is T typed)
+                return typed;
+
+            child = VisualTreeHelper.GetParent(child);
+        }
+
+        return null;
     }
 }

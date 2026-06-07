@@ -117,6 +117,8 @@ public partial class MainViewModel : ObservableObject
             Application.Current.Dispatcher.BeginInvoke(EmergencyStop);
         _hotkeyService.PlaybackHotkeyPressed += (_, _) =>
             Application.Current.Dispatcher.BeginInvoke(HandlePlaybackHotkey);
+        _hotkeyService.InsertRecordingHotkeyPressed += (_, _) =>
+            Application.Current.Dispatcher.BeginInvoke(HandleInsertRecordingHotkey);
         _hotkeyService.ProfilePlaybackRequested += (_, profileName) =>
             Application.Current.Dispatcher.BeginInvoke(() => HandleProfilePlaybackHotkey(profileName));
         _hotkeyService.StartListening();
@@ -417,6 +419,11 @@ public partial class MainViewModel : ObservableObject
     private void ToggleRecording()
     {
         if (IsPlaying) return;
+        if (ActionListVm.IsInsertRecordingDialogOpen)
+        {
+            ActionListVm.HandleInsertRecordingHotkey();
+            return;
+        }
 
         if (IsRecording)
         {
@@ -583,6 +590,14 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    private void HandleInsertRecordingHotkey()
+    {
+        if (IsPlaying) return;
+        if (IsRecording && !ActionListVm.IsRecordingSegment) return;
+
+        ActionListVm.HandleInsertRecordingHotkey();
+    }
+
     [RelayCommand]
     private void EmergencyStop()
     {
@@ -600,6 +615,9 @@ public partial class MainViewModel : ObservableObject
 
     private void OnEventRecorded(object? sender, InputEvent e)
     {
+        if (ActionListVm.IsRecordingSegment)
+            return;
+
         Application.Current.Dispatcher.Invoke(() =>
         {
             ActionListVm.Actions.Add(e);
@@ -645,8 +663,10 @@ public partial class MainViewModel : ObservableObject
         return action.EventType switch
         {
             InputEventType.KeyCombo => $"执行按键：{action.TextPattern}",
-            InputEventType.ImageClick => "找到这张图后点击",
-            InputEventType.WaitImage => "等待这张图出现",
+            InputEventType.RecordedSegment => $"执行鼠标键盘录制：{action.RecordedEventCount} 个动作",
+            InputEventType.PasteText => $"粘贴文字：{PreviewText(action.TextPattern)}",
+            InputEventType.ImageClick => "找到这张图后点击，没找到自动跳过",
+            InputEventType.WaitImage => "等待这张图出现，没找到自动跳过",
             InputEventType.WaitText => $"等待文字：{action.TextPattern}",
             InputEventType.ClickText => $"看到文字后点击：{action.TextPattern}",
             InputEventType.ReadText => "识别屏幕文字",
@@ -665,6 +685,8 @@ public partial class MainViewModel : ObservableObject
         return action.EventType switch
         {
             InputEventType.KeyCombo => string.IsNullOrWhiteSpace(action.TextPattern) ? "按键" : action.TextPattern,
+            InputEventType.RecordedSegment => "录制",
+            InputEventType.PasteText => "文字",
             InputEventType.ImageClick or InputEventType.WaitImage => "图片",
             InputEventType.WaitText or InputEventType.ClickText or InputEventType.ReadText => "文字",
             InputEventType.WaitWindow or InputEventType.ActivateWindow => "窗口",
@@ -673,6 +695,15 @@ public partial class MainViewModel : ObservableObject
             InputEventType.MouseDown or InputEventType.MouseUp or InputEventType.MouseMove or InputEventType.MouseWheel => "鼠标",
             _ => "步骤"
         };
+    }
+
+    private static string PreviewText(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return "空";
+
+        var singleLine = text.Replace("\r", " ").Replace("\n", " ").Trim();
+        return singleLine.Length <= 20 ? singleLine : $"{singleLine[..20]}...";
     }
 
     private static double NormalizePlaybackSpeed(double value)

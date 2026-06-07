@@ -64,28 +64,7 @@ public class PlaybackService : IPlaybackService
         {
             var totalLoops = loopCount == 0 ? int.MaxValue : loopCount;
 
-            // 预处理：去掉空闲 MouseMove（无按键按下时的移动），保留拖拽中的 MouseMove
-            var filtered = new List<InputEvent>();
-            long pendingDelta = 0;
-            bool mouseDown = false;
-            foreach (var evt in events)
-            {
-                if (evt.EventType == InputEventType.MouseDown)
-                    mouseDown = true;
-                else if (evt.EventType == InputEventType.MouseUp)
-                    mouseDown = false;
-
-                if (evt.EventType == InputEventType.MouseMove && !mouseDown)
-                {
-                    // 空闲移动：跳过，累加时间差
-                    pendingDelta += evt.DeltaMs;
-                }
-                else
-                {
-                    filtered.Add(CloneEvent(evt, evt.DeltaMs + pendingDelta));
-                    pendingDelta = 0;
-                }
-            }
+            var filtered = PreparePlaybackEvents(events);
 
             for (int loop = 0; loop < totalLoops; loop++)
             {
@@ -172,6 +151,10 @@ public class PlaybackService : IPlaybackService
                 await SimulateKeyComboWithTimeoutAsync(evt, cancellationToken);
                 break;
 
+            case InputEventType.RecordedSegment:
+                await ExecuteRecordedSegmentAsync(evt, variableTable, cancellationToken);
+                break;
+
             case InputEventType.MouseDown:
                 var (mouseDownX, mouseDownY) = ResolvePoint(evt);
                 _simulator.SimulateMousePress((short)mouseDownX, (short)mouseDownY, (MouseButton)evt.MouseButton);
@@ -210,6 +193,20 @@ public class PlaybackService : IPlaybackService
                 }
                 break;
 
+            case InputEventType.PasteText:
+                {
+                    var text = evt.TextPattern ?? string.Empty;
+                    if (string.IsNullOrEmpty(text))
+                    {
+                        _logger.Warn("Playback", "插入文字内容为空，已跳过");
+                        break;
+                    }
+
+                    await _clipboardInjector.InjectTextAsync(text);
+                    _logger.Info("Playback", $"插入文字完成: length={text.Length}");
+                    break;
+                }
+
             case InputEventType.Delay:
                 await DelayAsync(evt.DeltaMs, cancellationToken);
                 break;
@@ -232,7 +229,9 @@ public class PlaybackService : IPlaybackService
                         evt.TimeoutMs,
                         cancellationToken);
                     if (!found.Found)
-                        _cts?.Cancel();
+                    {
+                        SkipMissingImage(evt, "等待图片");
+                    }
                     break;
                 }
 
@@ -245,7 +244,7 @@ public class PlaybackService : IPlaybackService
                         cancellationToken);
                     if (!found.Found)
                     {
-                        _cts?.Cancel();
+                        SkipMissingImage(evt, "图片点击");
                         break;
                     }
 
@@ -399,6 +398,44 @@ public class PlaybackService : IPlaybackService
         }
     }
 
+    private async Task ExecuteRecordedSegmentAsync(InputEvent segment, VariableTable variableTable, CancellationToken cancellationToken)
+    {
+        if (segment.RecordedEvents is null || segment.RecordedEvents.Count == 0)
+        {
+            _logger.Warn("Playback", "鼠标键盘录制片段为空，已跳过");
+            return;
+        }
+
+        var timeoutMs = Math.Max(1000, segment.TimeoutMs <= 0 ? 10000 : segment.TimeoutMs);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeoutCts.CancelAfter(timeoutMs);
+
+        try
+        {
+            var childEvents = PreparePlaybackEvents(segment.RecordedEvents);
+            for (var i = 0; i < childEvents.Count; i++)
+            {
+                timeoutCts.Token.ThrowIfCancellationRequested();
+
+                if (IsPaused && _pauseTcs is not null)
+                    await _pauseTcs.Task;
+
+                var child = childEvents[i];
+                if (child.EventType != InputEventType.Delay && child.DeltaMs > 0)
+                    await DelayAsync(child.DeltaMs, timeoutCts.Token);
+
+                await ExecuteEvent(child, variableTable, timeoutCts.Token);
+            }
+
+            _logger.Info("Playback", $"鼠标键盘录制片段完成: actions={childEvents.Count}");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.Error("Playback", $"鼠标键盘录制片段超时: timeout={timeoutMs}ms, actions={segment.RecordedEventCount}");
+            _cts?.Cancel();
+        }
+    }
+
     private static List<KeyCode> BuildKeyComboKeys(string? comboText)
     {
         if (string.IsNullOrWhiteSpace(comboText))
@@ -433,6 +470,42 @@ public class PlaybackService : IPlaybackService
         return delayMs == 0
             ? Task.CompletedTask
             : Task.Delay(delayMs, cancellationToken);
+    }
+
+    private static List<InputEvent> PreparePlaybackEvents(IEnumerable<InputEvent> events)
+    {
+        var filtered = new List<InputEvent>();
+        long pendingDelta = 0;
+        var mouseDown = false;
+
+        foreach (var evt in events)
+        {
+            if (evt.EventType == InputEventType.MouseDown)
+            {
+                mouseDown = true;
+            }
+            else if (evt.EventType == InputEventType.MouseUp)
+            {
+                if (!mouseDown)
+                {
+                    pendingDelta += evt.DeltaMs;
+                    continue;
+                }
+
+                mouseDown = false;
+            }
+
+            if (evt.EventType == InputEventType.MouseMove && !mouseDown)
+            {
+                pendingDelta += evt.DeltaMs;
+                continue;
+            }
+
+            filtered.Add(CloneEvent(evt, evt.DeltaMs + pendingDelta));
+            pendingDelta = 0;
+        }
+
+        return filtered;
     }
 
     private static InputEvent CloneEvent(InputEvent evt, long deltaMs)
@@ -472,8 +545,14 @@ public class PlaybackService : IPlaybackService
             RequestUrl = evt.RequestUrl,
             RequestMethod = evt.RequestMethod,
             RequestBody = evt.RequestBody,
-            ResponseVariableName = evt.ResponseVariableName
+            ResponseVariableName = evt.ResponseVariableName,
+            RecordedEvents = CloneRecordedEvents(evt.RecordedEvents)
         };
+    }
+
+    private static List<InputEvent>? CloneRecordedEvents(IEnumerable<InputEvent>? events)
+    {
+        return events?.Select(child => CloneEvent(child, child.DeltaMs)).ToList();
     }
 
     private void SaveRuntimeVariable(string name, string value)
@@ -498,5 +577,11 @@ public class PlaybackService : IPlaybackService
         return evt.UseOcrRegion && evt.OcrRegionWidth > 0 && evt.OcrRegionHeight > 0
             ? new OcrRegion(evt.OcrRegionX, evt.OcrRegionY, evt.OcrRegionWidth, evt.OcrRegionHeight)
             : null;
+    }
+
+    private void SkipMissingImage(InputEvent evt, string actionName)
+    {
+        var imageName = Path.GetFileName(evt.ImagePath);
+        _logger.Warn("Playback", $"{actionName}未找到，已自动跳过: {imageName}, timeout={evt.TimeoutMs}ms");
     }
 }

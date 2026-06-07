@@ -1,0 +1,70 @@
+<ui:FluentWindow
+    x:Class="AutoMacro.Views.SegmentRecordingDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="片段录制"
+    Width="430"
+    Height="230"
+    ResizeMode="NoResize"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    Topmost="True"
+    Closing="Window_Closing"
+    Icon="/Assets/icon.ico">
+
+    <Grid Margin="20,42,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0">
+            <TextBlock Text="插入录制"
+                       FontSize="18"
+                       FontWeight="SemiBold"
+                       Margin="0,0,0,8" />
+            <TextBlock x:Name="StatusText"
+                       Text="点“开始录制”或按 F10 后，去操作目标窗口。完成后再按 F10，或回来点“停止并插入”。"
+                       TextWrapping="Wrap"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       FontSize="13" />
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                Margin="0,16,0,0"
+                Padding="12"
+                CornerRadius="6"
+                Background="{DynamicResource ControlFillColorDefaultBrush}"
+                BorderBrush="{DynamicResource ControlStrokeColorDefaultBrush}"
+                BorderThickness="1">
+            <TextBlock Text="录到的鼠标和键盘动作会插入到当前选中步骤后面。停止按钮产生的点击会自动丢掉。"
+                       TextWrapping="Wrap"
+                       FontSize="12"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+        </Border>
+
+        <StackPanel Grid.Row="2"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,16,0,0">
+            <ui:Button Content="取消"
+                       Click="Cancel_Click"
+                       Margin="0,0,8,0"
+                       MinWidth="80" />
+            <ui:Button x:Name="StartButton"
+                       Content="开始录制"
+                       Appearance="Primary"
+                       Click="Start_Click"
+                       Margin="0,0,8,0"
+                       MinWidth="90" />
+            <ui:Button x:Name="StopButton"
+                       Content="停止并插入"
+                       Appearance="Danger"
+                       Click="Stop_Click"
+                       IsEnabled="False"
+                       MinWidth="100" />
+        </StackPanel>
+    </Grid>
+</ui:FluentWindow>
