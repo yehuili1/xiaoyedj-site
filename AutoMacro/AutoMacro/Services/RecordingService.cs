@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using AutoMacro.Models;
 using SharpHook;
 using SharpHook.Data;
@@ -12,8 +13,38 @@ public class RecordingService : IRecordingService
     private readonly IWindowAutomationService _windowAutomationService;
     private readonly Stopwatch _stopwatch = new();
     private readonly List<InputEvent> _events = new();
+    private readonly HashSet<int> _pressedMouseButtons = new();
     private long _lastTimestamp;
     private short _lastMouseX, _lastMouseY;
+    private bool _hasMousePosition;
+
+    private const int VkLeftButton = 0x01;
+    private const int VkRightButton = 0x02;
+    private const int VkMiddleButton = 0x04;
+    private const int VkXButton1 = 0x05;
+    private const int VkXButton2 = 0x06;
+
+    private static readonly (int VirtualKey, MouseButton Button)[] MouseButtonsToCapture =
+    [
+        (VkLeftButton, MouseButton.Button1),
+        (VkRightButton, MouseButton.Button2),
+        (VkMiddleButton, MouseButton.Button3),
+        (VkXButton1, MouseButton.Button4),
+        (VkXButton2, MouseButton.Button5)
+    ];
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int vKey);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        public int X;
+        public int Y;
+    }
 
     public bool IsRecording { get; private set; }
     public bool IsPaused { get; private set; }
@@ -34,7 +65,9 @@ public class RecordingService : IRecordingService
         if (IsRecording) return;
 
         _events.Clear();
+        _pressedMouseButtons.Clear();
         _lastTimestamp = 0;
+        _hasMousePosition = false;
         _stopwatch.Restart();
         IsRecording = true;
         IsPaused = false;
@@ -45,7 +78,10 @@ public class RecordingService : IRecordingService
         hook.MousePressed += OnMousePressed;
         hook.MouseReleased += OnMouseReleased;
         hook.MouseMoved += OnMouseMoved;
+        hook.MouseDragged += OnMouseDragged;
         hook.MouseWheel += OnMouseWheel;
+
+        RecordPressedMouseButtonsAtStart();
     }
 
     public void PauseRecording()
@@ -75,7 +111,9 @@ public class RecordingService : IRecordingService
         hook.MousePressed -= OnMousePressed;
         hook.MouseReleased -= OnMouseReleased;
         hook.MouseMoved -= OnMouseMoved;
+        hook.MouseDragged -= OnMouseDragged;
         hook.MouseWheel -= OnMouseWheel;
+        _pressedMouseButtons.Clear();
     }
 
     public List<InputEvent> GetRecordedEvents() => new(_events);
@@ -99,6 +137,34 @@ public class RecordingService : IRecordingService
     {
         _events.Add(evt);
         EventRecorded?.Invoke(this, evt);
+    }
+
+    private void RecordPressedMouseButtonsAtStart()
+    {
+        if (!GetCursorPos(out var point))
+            return;
+
+        foreach (var (virtualKey, button) in MouseButtonsToCapture)
+        {
+            if ((GetAsyncKeyState(virtualKey) & 0x8000) == 0)
+                continue;
+
+            var buttonValue = (int)button;
+            if (!_pressedMouseButtons.Add(buttonValue))
+                continue;
+
+            var x = ToShortCoordinate(point.X);
+            var y = ToShortCoordinate(point.Y);
+            RememberMousePosition(x, y);
+            Record(AddWindowContext(new InputEvent
+            {
+                EventType = InputEventType.MouseDown,
+                MouseButton = buttonValue,
+                X = x,
+                Y = y,
+                DeltaMs = GetDelta()
+            }));
+        }
     }
 
     private void OnKeyPressed(object? sender, KeyboardHookEventArgs e)
@@ -128,6 +194,8 @@ public class RecordingService : IRecordingService
     private void OnMousePressed(object? sender, MouseHookEventArgs e)
     {
         if (IsPaused) return;
+        _pressedMouseButtons.Add((int)e.Data.Button);
+        RememberMousePosition(e.Data.X, e.Data.Y);
         Record(AddWindowContext(new InputEvent
         {
             EventType = InputEventType.MouseDown,
@@ -149,17 +217,33 @@ public class RecordingService : IRecordingService
             Y = e.Data.Y,
             DeltaMs = GetDelta()
         }));
+        _pressedMouseButtons.Remove((int)e.Data.Button);
+        RememberMousePosition(e.Data.X, e.Data.Y);
     }
 
     private void OnMouseMoved(object? sender, MouseHookEventArgs e)
     {
-        if (IsPaused) return;
-        var dx = Math.Abs(e.Data.X - _lastMouseX);
-        var dy = Math.Abs(e.Data.Y - _lastMouseY);
-        if (dx < 5 && dy < 5) return;
+        RecordMouseMove(e, false);
+    }
 
-        _lastMouseX = e.Data.X;
-        _lastMouseY = e.Data.Y;
+    private void OnMouseDragged(object? sender, MouseHookEventArgs e)
+    {
+        RecordMouseMove(e, true);
+    }
+
+    private void RecordMouseMove(MouseHookEventArgs e, bool isDragEvent)
+    {
+        if (IsPaused) return;
+
+        var threshold = isDragEvent || _pressedMouseButtons.Count > 0 ? 1 : 5;
+        if (_hasMousePosition)
+        {
+            var dx = Math.Abs(e.Data.X - _lastMouseX);
+            var dy = Math.Abs(e.Data.Y - _lastMouseY);
+            if (dx < threshold && dy < threshold) return;
+        }
+
+        RememberMousePosition(e.Data.X, e.Data.Y);
 
         Record(AddWindowContext(new InputEvent
         {
@@ -168,6 +252,18 @@ public class RecordingService : IRecordingService
             Y = e.Data.Y,
             DeltaMs = GetDelta()
         }));
+    }
+
+    private void RememberMousePosition(short x, short y)
+    {
+        _lastMouseX = x;
+        _lastMouseY = y;
+        _hasMousePosition = true;
+    }
+
+    private static short ToShortCoordinate(int value)
+    {
+        return (short)Math.Clamp(value, short.MinValue, short.MaxValue);
     }
 
     private void OnMouseWheel(object? sender, MouseWheelHookEventArgs e)

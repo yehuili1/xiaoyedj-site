@@ -96,14 +96,16 @@ public class WindowAutomationService : IWindowAutomationService
             return false;
         }
 
+        var hasFixedLayout = HasFixedLayout(evt.WindowProcessName, evt.WindowTitle);
+
         if (evt.UseWindowClientCoordinates &&
             evt.RecordedClientWidth > 0 &&
             evt.RecordedClientHeight > 0 &&
             snapshot.ClientWidth > 0 &&
             snapshot.ClientHeight > 0)
         {
-            x = snapshot.ClientLeft + ResolveHorizontalCoordinate(evt.ClientRelativeX, evt.RecordedClientWidth, snapshot.ClientWidth);
-            y = snapshot.ClientTop + ResolveVerticalCoordinate(evt.ClientRelativeY, evt.RecordedClientHeight, snapshot.ClientHeight);
+            x = snapshot.ClientLeft + ResolveHorizontalCoordinate(evt.ClientRelativeX, evt.RecordedClientWidth, snapshot.ClientWidth, hasFixedLayout);
+            y = snapshot.ClientTop + ResolveVerticalCoordinate(evt.ClientRelativeY, evt.RecordedClientHeight, snapshot.ClientHeight, hasFixedLayout);
             return true;
         }
 
@@ -112,8 +114,8 @@ public class WindowAutomationService : IWindowAutomationService
             snapshot.Width > 0 &&
             snapshot.Height > 0)
         {
-            x = snapshot.Left + ResolveHorizontalCoordinate(evt.RelativeX, evt.RecordedWindowWidth, snapshot.Width);
-            y = snapshot.Top + ResolveVerticalCoordinate(evt.RelativeY, evt.RecordedWindowHeight, snapshot.Height);
+            x = snapshot.Left + ResolveHorizontalCoordinate(evt.RelativeX, evt.RecordedWindowWidth, snapshot.Width, hasFixedLayout);
+            y = snapshot.Top + ResolveVerticalCoordinate(evt.RelativeY, evt.RecordedWindowHeight, snapshot.Height, hasFixedLayout);
             return true;
         }
 
@@ -318,10 +320,13 @@ public class WindowAutomationService : IWindowAutomationService
             clientHeight);
     }
 
-    private static int ResolveHorizontalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
+    private static int ResolveHorizontalCoordinate(int recordedCoordinate, int recordedSize, int currentSize, bool hasFixedLeftPane)
     {
         if (recordedSize <= 0)
             return recordedCoordinate;
+
+        if (hasFixedLeftPane)
+            return ResolveFixedLayoutHorizontalCoordinate(recordedCoordinate, recordedSize, currentSize);
 
         var startDistance = recordedCoordinate;
         var endDistance = recordedSize - recordedCoordinate;
@@ -337,10 +342,13 @@ public class WindowAutomationService : IWindowAutomationService
         return ClampCoordinate((int)Math.Round(Math.Clamp(ratio, 0, 1) * currentSize), currentSize);
     }
 
-    private static int ResolveVerticalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
+    private static int ResolveVerticalCoordinate(int recordedCoordinate, int recordedSize, int currentSize, bool hasFixedVerticalLayout)
     {
         if (recordedSize <= 0)
             return recordedCoordinate;
+
+        if (hasFixedVerticalLayout)
+            return ResolveFixedLayoutVerticalCoordinate(recordedCoordinate, recordedSize, currentSize);
 
         var startDistance = recordedCoordinate;
         var endDistance = recordedSize - recordedCoordinate;
@@ -354,11 +362,110 @@ public class WindowAutomationService : IWindowAutomationService
 
         var ratio = recordedCoordinate / (double)recordedSize;
         return ClampCoordinate((int)Math.Round(Math.Clamp(ratio, 0, 1) * currentSize), currentSize);
+    }
+
+    private static int ResolveFixedLayoutHorizontalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
+    {
+        var leftPane = GetFixedLeftPaneSize(recordedSize);
+        var rightBand = GetFixedRightPaneBand(recordedSize);
+        var startDistance = recordedCoordinate;
+        var endDistance = recordedSize - recordedCoordinate;
+
+        if (startDistance <= leftPane && endDistance > rightBand)
+            return ClampCoordinate(startDistance, currentSize);
+
+        if (endDistance <= rightBand && startDistance > leftPane)
+            return ClampCoordinate(currentSize - endDistance, currentSize);
+
+        return ResolveInsideResizableBand(
+            recordedCoordinate,
+            recordedSize,
+            currentSize,
+            leftPane,
+            rightBand);
+    }
+
+    private static int ResolveFixedLayoutVerticalCoordinate(int recordedCoordinate, int recordedSize, int currentSize)
+    {
+        var topBand = GetFixedTopPaneBand(recordedSize);
+        var bottomBand = GetFixedBottomPaneBand(recordedSize);
+        var startDistance = recordedCoordinate;
+        var endDistance = recordedSize - recordedCoordinate;
+
+        if (startDistance <= topBand && endDistance > bottomBand)
+            return ClampCoordinate(startDistance, currentSize);
+
+        if (endDistance <= bottomBand && startDistance > topBand)
+            return ClampCoordinate(currentSize - endDistance, currentSize);
+
+        return ResolveInsideResizableBand(
+            recordedCoordinate,
+            recordedSize,
+            currentSize,
+            topBand,
+            bottomBand);
+    }
+
+    private static int ResolveInsideResizableBand(
+        int recordedCoordinate,
+        int recordedSize,
+        int currentSize,
+        int fixedStart,
+        int fixedEnd)
+    {
+        var recordedResizableSize = recordedSize - fixedStart - fixedEnd;
+        var currentResizableSize = currentSize - fixedStart - fixedEnd;
+
+        if (recordedResizableSize <= 0 || currentResizableSize <= 0)
+        {
+            var ratio = recordedCoordinate / (double)Math.Max(1, recordedSize);
+            return ClampCoordinate((int)Math.Round(Math.Clamp(ratio, 0, 1) * currentSize), currentSize);
+        }
+
+        var insideOffset = recordedCoordinate - fixedStart;
+        var ratioInside = Math.Clamp(insideOffset / (double)recordedResizableSize, 0, 1);
+        return ClampCoordinate(fixedStart + (int)Math.Round(ratioInside * currentResizableSize), currentSize);
     }
 
     private static int GetEdgeBand(int recordedSize)
     {
         return (int)Math.Round(Math.Clamp(recordedSize * 0.28, 100, 320));
+    }
+
+    private static int GetFixedLeftPaneSize(int recordedSize)
+    {
+        return (int)Math.Round(Math.Clamp(recordedSize * 0.34, 320, 430));
+    }
+
+    private static int GetFixedRightPaneBand(int recordedSize)
+    {
+        return (int)Math.Round(Math.Clamp(recordedSize * 0.16, 140, 280));
+    }
+
+    private static int GetFixedTopPaneBand(int recordedSize)
+    {
+        return (int)Math.Round(Math.Clamp(recordedSize * 0.08, 60, 110));
+    }
+
+    private static int GetFixedBottomPaneBand(int recordedSize)
+    {
+        return (int)Math.Round(Math.Clamp(recordedSize * 0.22, 180, 360));
+    }
+
+    private static bool HasFixedLayout(string? processName, string? title)
+    {
+        var process = processName?.Trim() ?? string.Empty;
+        if (process.Equals("Weixin", StringComparison.OrdinalIgnoreCase) ||
+            process.Equals("WeChat", StringComparison.OrdinalIgnoreCase) ||
+            process.Equals("WXWork", StringComparison.OrdinalIgnoreCase) ||
+            process.Equals("WXWorkWeb", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var windowTitle = title?.Trim() ?? string.Empty;
+        return windowTitle.Contains("微信", StringComparison.OrdinalIgnoreCase) ||
+               windowTitle.Contains("企业微信", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int ClampCoordinate(int coordinate, int currentSize)

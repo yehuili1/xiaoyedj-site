@@ -1,177 +1,195 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Windows;
-using Application = System.Windows.Application;
-using Clipboard = System.Windows.Clipboard;
 
 namespace AutoMacro.Services;
 
 public class ClipboardInjector : IClipboardInjector
 {
-    private const uint INPUT_KEYBOARD = 1;
-    private const uint KEYEVENTF_KEYUP = 0x0002;
-    private const uint KEYEVENTF_UNICODE = 0x0004;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct Input
-    {
-        public uint Type;
-        public InputUnion Data;
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    private struct InputUnion
-    {
-        [FieldOffset(0)]
-        public KeyboardInput Keyboard;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct KeyboardInput
-    {
-        public ushort VirtualKey;
-        public ushort ScanCode;
-        public uint Flags;
-        public uint Time;
-        public UIntPtr ExtraInfo;
-    }
-
-    [DllImport("user32.dll")]
-    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    private static extern uint SendInput(uint inputCount, Input[] inputs, int inputSize);
-
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetForegroundWindow();
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
-
-    private readonly IRunLogger _logger;
-
     private const byte VK_CONTROL = 0x11;
     private const byte VK_V = 0x56;
-    private const int ClipboardRetryCount = 5;
-    private const int ClipboardRetryDelayMs = 20;
+    private const uint KEYEVENTF_KEYUP = 0x0002;
+
+    private const uint CF_UNICODETEXT = 13;
+    private const uint GMEM_MOVEABLE = 0x0002;
+    private const int ClipboardWriteTimeoutMs = 15000;
+    private const int ClipboardRetryDelayMs = 75;
+
+    private readonly IRunLogger _logger;
 
     public ClipboardInjector(IRunLogger logger)
     {
         _logger = logger;
     }
 
-    public async Task InjectTextAsync(string text)
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool OpenClipboard(IntPtr hWndNewOwner);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool EmptyClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool CloseClipboard();
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetOpenClipboardWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalAlloc(uint uFlags, UIntPtr dwBytes);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalLock(IntPtr hMem);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GlobalUnlock(IntPtr hMem);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr GlobalFree(IntPtr hMem);
+
+    public async Task InjectTextAsync(string text, CancellationToken cancellationToken = default)
     {
         _logger.Info("Clipboard", $"准备粘贴，文本长度={text.Length}，前台窗口=\"{GetForegroundWindowTitle()}\"");
 
-        try
-        {
-            await SetClipboardTextAsync(text);
-            _logger.Info("Clipboard", "剪贴板写入成功，开始模拟 Ctrl+V");
+        await SetClipboardTextAsync(text, cancellationToken);
+        _logger.Info("Clipboard", $"剪贴板写入成功，开始模拟 Ctrl+V，前台窗口=\"{GetForegroundWindowTitle()}\"");
 
-            await Task.Delay(10);
+        await Task.Delay(20, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        SendCtrlV();
+        await Task.Delay(50, cancellationToken);
 
-            // 用 Win32 keybd_event 模拟 Ctrl+V（比 SharpHook EventSimulator 更可靠）
-            keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
-            keybd_event(VK_V, 0, 0, UIntPtr.Zero);
-            await Task.Delay(8);
-            keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-            keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
-
-            await Task.Delay(10);
-            _logger.Info("Clipboard", $"Ctrl+V 已发送，当前前台窗口=\"{GetForegroundWindowTitle()}\"");
-        }
-        catch (Exception ex)
-        {
-            _logger.Warn("Clipboard", $"剪贴板粘贴失败，改用直接输入兜底: {ex.Message}");
-            await TypeTextDirectlyAsync(text);
-        }
+        _logger.Info("Clipboard", $"Ctrl+V 已发送，当前前台窗口=\"{GetForegroundWindowTitle()}\"");
     }
 
-    public async Task CopyTextAsync(string text)
+    public async Task CopyTextAsync(string text, CancellationToken cancellationToken = default)
     {
-        await SetClipboardTextAsync(text);
+        await SetClipboardTextAsync(text, cancellationToken);
         _logger.Info("Clipboard", $"已复制到剪贴板，文本长度={text.Length}");
     }
 
-    private async Task SetClipboardTextAsync(string text)
+    private async Task SetClipboardTextAsync(string text, CancellationToken cancellationToken)
     {
-        Exception? lastError = null;
+        var normalizedText = NormalizeClipboardText(text);
+        var stopwatch = Stopwatch.StartNew();
+        var attempt = 0;
+        var lastError = "";
+        var lastOwner = "";
 
-        for (var attempt = 0; attempt < ClipboardRetryCount; attempt++)
+        while (stopwatch.ElapsedMilliseconds < ClipboardWriteTimeoutMs)
         {
-            try
+            cancellationToken.ThrowIfCancellationRequested();
+            attempt++;
+            if (TrySetClipboardText(normalizedText, out lastError))
             {
-                if (Application.Current.Dispatcher.CheckAccess())
-                {
-                    Clipboard.SetText(text);
-                }
-                else
-                {
-                    await Application.Current.Dispatcher.InvokeAsync(() => Clipboard.SetText(text));
-                }
-
+                if (attempt > 1)
+                    _logger.Info("Clipboard", $"剪贴板第 {attempt} 次写入成功");
                 return;
             }
-            catch (Exception ex)
+
+            lastOwner = GetOpenClipboardOwnerText();
+            if (attempt == 1 || attempt % 10 == 0)
             {
-                lastError = ex;
-                _logger.Warn("Clipboard", $"剪贴板写入失败，第 {attempt + 1} 次: {ex.Message}");
-                if (attempt < ClipboardRetryCount - 1)
-                    await Task.Delay(ClipboardRetryDelayMs);
+                _logger.Warn("Clipboard",
+                    $"剪贴板暂时被占用，第 {attempt} 次，错误={lastError}，占用={lastOwner}");
             }
+
+            await Task.Delay(ClipboardRetryDelayMs, cancellationToken);
         }
 
-        if (lastError is not null)
-            throw lastError;
+        throw new InvalidOperationException(
+            $"剪贴板持续被占用 {ClipboardWriteTimeoutMs / 1000} 秒，无法粘贴。最后错误={lastError}，占用={lastOwner}");
     }
 
-    private async Task TypeTextDirectlyAsync(string text)
+    private static bool TrySetClipboardText(string text, out string error)
     {
-        _logger.Info("ClipboardFallback", $"开始直接输入，文本长度={text.Length}，前台窗口=\"{GetForegroundWindowTitle()}\"");
+        error = "";
 
-        foreach (var ch in text)
+        if (!OpenClipboard(IntPtr.Zero))
         {
-            SendUnicodeChar(ch);
-            await Task.Delay(1);
+            error = $"OpenClipboard Win32Error={Marshal.GetLastWin32Error()}";
+            return false;
         }
 
-        _logger.Info("ClipboardFallback", $"直接输入完成，当前前台窗口=\"{GetForegroundWindowTitle()}\"");
+        IntPtr hGlobal = IntPtr.Zero;
+        try
+        {
+            if (!EmptyClipboard())
+            {
+                error = $"EmptyClipboard Win32Error={Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            var bytes = Encoding.Unicode.GetBytes(text + "\0");
+            hGlobal = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)bytes.Length);
+            if (hGlobal == IntPtr.Zero)
+            {
+                error = $"GlobalAlloc Win32Error={Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            var target = GlobalLock(hGlobal);
+            if (target == IntPtr.Zero)
+            {
+                error = $"GlobalLock Win32Error={Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            try
+            {
+                Marshal.Copy(bytes, 0, target, bytes.Length);
+            }
+            finally
+            {
+                GlobalUnlock(hGlobal);
+            }
+
+            if (SetClipboardData(CF_UNICODETEXT, hGlobal) == IntPtr.Zero)
+            {
+                error = $"SetClipboardData Win32Error={Marshal.GetLastWin32Error()}";
+                return false;
+            }
+
+            hGlobal = IntPtr.Zero;
+            return true;
+        }
+        finally
+        {
+            if (hGlobal != IntPtr.Zero)
+                GlobalFree(hGlobal);
+            CloseClipboard();
+        }
     }
 
-    private static void SendUnicodeChar(char ch)
+    private static void SendCtrlV()
     {
-        var inputs = new[]
-        {
-            new Input
-            {
-                Type = INPUT_KEYBOARD,
-                Data = new InputUnion
-                {
-                    Keyboard = new KeyboardInput
-                    {
-                        ScanCode = ch,
-                        Flags = KEYEVENTF_UNICODE
-                    }
-                }
-            },
-            new Input
-            {
-                Type = INPUT_KEYBOARD,
-                Data = new InputUnion
-                {
-                    Keyboard = new KeyboardInput
-                    {
-                        ScanCode = ch,
-                        Flags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
-                    }
-                }
-            }
-        };
+        keybd_event(VK_CONTROL, 0, 0, UIntPtr.Zero);
+        keybd_event(VK_V, 0, 0, UIntPtr.Zero);
+        Thread.Sleep(5);
+        keybd_event(VK_V, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+    }
 
-        var sent = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<Input>());
-        if (sent != inputs.Length)
-            throw new InvalidOperationException($"SendInput 失败，已发送 {sent}/{inputs.Length}，Win32Error={Marshal.GetLastWin32Error()}");
+    private static string NormalizeClipboardText(string text)
+    {
+        return text
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Replace("\r", "\n", StringComparison.Ordinal)
+            .Replace("\n", "\r\n", StringComparison.Ordinal);
     }
 
     private static string GetForegroundWindowTitle()
@@ -181,13 +199,45 @@ public class ClipboardInjector : IClipboardInjector
             var handle = GetForegroundWindow();
             if (handle == IntPtr.Zero) return "";
 
-            var builder = new StringBuilder(256);
-            GetWindowText(handle, builder, builder.Capacity);
-            return builder.ToString();
+            return GetWindowTitle(handle);
         }
         catch
         {
             return "";
         }
+    }
+
+    private static string GetOpenClipboardOwnerText()
+    {
+        try
+        {
+            var handle = GetOpenClipboardWindow();
+            if (handle == IntPtr.Zero)
+                return "未返回占用窗口";
+
+            GetWindowThreadProcessId(handle, out var processId);
+            var processName = "";
+            try
+            {
+                processName = Process.GetProcessById((int)processId).ProcessName;
+            }
+            catch
+            {
+            }
+
+            var title = GetWindowTitle(handle);
+            return $"pid={processId}, process={processName}, window=\"{title}\"";
+        }
+        catch (Exception ex)
+        {
+            return $"查询占用者失败: {ex.Message}";
+        }
+    }
+
+    private static string GetWindowTitle(IntPtr handle)
+    {
+        var builder = new StringBuilder(256);
+        GetWindowText(handle, builder, builder.Capacity);
+        return builder.ToString();
     }
 }

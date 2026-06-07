@@ -53,12 +53,12 @@ public class HotkeyService : IHotkeyService
         if (string.Equals(Settings.InsertRecording, "F5", StringComparison.OrdinalIgnoreCase))
             _insertRecordingBinding = HotkeyBinding.Empty;
 
-        _suppressedKeys = new HashSet<KeyCode>
-        {
-            _recordBinding.Key, _pauseBinding.Key,
-            _stopBinding.Key, _playbackBinding.Key,
-            _insertRecordingBinding.Key
-        };
+        _suppressedKeys = new HashSet<KeyCode>();
+        AddSuppressedKey(_recordBinding);
+        AddSuppressedKey(_pauseBinding);
+        AddSuppressedKey(_stopBinding);
+        AddSuppressedKey(_playbackBinding);
+        AddSuppressedKey(_insertRecordingBinding);
 
         // 解析方案快捷键
         _profileBindings.Clear();
@@ -72,9 +72,14 @@ public class HotkeyService : IHotkeyService
             }
         }
 
-        _suppressedKeys.Remove(KeyCode.VcUndefined);
         _logger.Info("Hotkey",
             $"配置: record={Settings.StartStopRecording}, pause={Settings.PauseRecording}, stop={Settings.EmergencyStop}, playback={Settings.StartPlayback}, insertRecording={Settings.InsertRecording}, profileHotkeys={Settings.ProfileHotkeys.Count}");
+    }
+
+    private void AddSuppressedKey(HotkeyBinding binding)
+    {
+        if (binding.IsValid)
+            _suppressedKeys.Add(binding.Key);
     }
 
     /// <summary>
@@ -116,6 +121,9 @@ public class HotkeyService : IHotkeyService
 
     private static bool Matches(HotkeyBinding binding, KeyCode key, EventMask mask)
     {
+        if (!binding.IsValid || key == KeyCode.VcUndefined || HotkeyBinding.IsModifierKey(key))
+            return false;
+
         if (binding.Key != key) return false;
 
         // 使用 SharpHook 扩展方法，正确检测左/右修饰键

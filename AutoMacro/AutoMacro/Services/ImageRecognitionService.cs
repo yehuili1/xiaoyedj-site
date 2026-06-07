@@ -253,6 +253,9 @@ public class ImageRecognitionService : IImageRecognitionService
                     bestX = offsetX + maxLocation.X + candidate.Width / 2;
                     bestY = offsetY + maxLocation.Y + candidate.Height / 2;
                 }
+
+                if (Math.Abs(scale - 1.0) <= 0.001 && maxValue >= threshold)
+                    return (true, offsetX + maxLocation.X + candidate.Width / 2, offsetY + maxLocation.Y + candidate.Height / 2, maxValue);
             }
             finally
             {

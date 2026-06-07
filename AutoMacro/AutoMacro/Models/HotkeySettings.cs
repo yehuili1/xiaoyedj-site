@@ -10,7 +10,13 @@ namespace AutoMacro.Models;
 public record struct HotkeyBinding(KeyCode Key, bool Ctrl, bool Shift, bool Alt)
 {
     public static readonly HotkeyBinding Empty = new(KeyCode.VcUndefined, false, false, false);
-    public bool IsValid => Key != KeyCode.VcUndefined;
+    public bool IsValid => Key != KeyCode.VcUndefined && !IsModifierKey(Key);
+
+    public static bool IsModifierKey(KeyCode key) =>
+        key is KeyCode.VcLeftControl or KeyCode.VcRightControl or
+            KeyCode.VcLeftShift or KeyCode.VcRightShift or
+            KeyCode.VcLeftAlt or KeyCode.VcRightAlt or
+            KeyCode.VcLeftMeta or KeyCode.VcRightMeta;
 }
 
 public class HotkeySettings

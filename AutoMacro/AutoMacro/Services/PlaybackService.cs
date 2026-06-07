@@ -187,7 +187,7 @@ public class PlaybackService : IPlaybackService
                     }
 
                     _logger.Info("Playback", $"粘贴变量: row={_variableCounter + 1}, length={value.Length}");
-                    await _clipboardInjector.InjectTextAsync(value);
+                    await _clipboardInjector.InjectTextAsync(value, cancellationToken);
 
                     _variableCounter++;
                 }
@@ -202,7 +202,7 @@ public class PlaybackService : IPlaybackService
                         break;
                     }
 
-                    await _clipboardInjector.InjectTextAsync(text);
+                    await _clipboardInjector.InjectTextAsync(text, cancellationToken);
                     _logger.Info("Playback", $"插入文字完成: length={text.Length}");
                     break;
                 }
@@ -252,9 +252,9 @@ public class PlaybackService : IPlaybackService
                         await Task.Delay(evt.AfterFoundDelayMs, cancellationToken);
 
                     _simulator.SimulateMouseMovement((short)found.X, (short)found.Y);
-                    await Task.Delay(50, cancellationToken);
+                    await Task.Delay(20, cancellationToken);
                     _simulator.SimulateMousePress((short)found.X, (short)found.Y, MouseButton.Button1);
-                    await Task.Delay(50, cancellationToken);
+                    await Task.Delay(20, cancellationToken);
                     _simulator.SimulateMouseRelease((short)found.X, (short)found.Y, MouseButton.Button1);
                     _logger.Info("Playback", $"图片点击完成: {Path.GetFileName(evt.ImagePath)}, x={found.X}, y={found.Y}, score={found.Score:0.000}");
                     break;
@@ -292,9 +292,9 @@ public class PlaybackService : IPlaybackService
                     var x = found.X + found.Width / 2;
                     var y = found.Y + found.Height / 2;
                     _simulator.SimulateMouseMovement((short)x, (short)y);
-                    await Task.Delay(50, cancellationToken);
+                    await Task.Delay(20, cancellationToken);
                     _simulator.SimulateMousePress((short)x, (short)y, MouseButton.Button1);
-                    await Task.Delay(50, cancellationToken);
+                    await Task.Delay(20, cancellationToken);
                     _simulator.SimulateMouseRelease((short)x, (short)y, MouseButton.Button1);
                     _logger.Info("OCR", $"文字点击完成: \"{found.Text}\", x={x}, y={y}");
                     break;
@@ -310,7 +310,7 @@ public class PlaybackService : IPlaybackService
                         break;
                     }
 
-                    await _clipboardInjector.CopyTextAsync(read.Text);
+                    await _clipboardInjector.CopyTextAsync(read.Text, cancellationToken);
                     SaveRuntimeVariable("识别文字", read.Text);
                     _logger.Info("OCR", $"读取屏幕文字完成，已复制到剪贴板，length={read.Text.Length}");
                     break;
@@ -341,7 +341,7 @@ public class PlaybackService : IPlaybackService
                     SaveRuntimeVariable(variableName, result.Body);
 
                     if (evt.EventType == InputEventType.ReadData)
-                        await _clipboardInjector.CopyTextAsync(result.Body);
+                        await _clipboardInjector.CopyTextAsync(result.Body, cancellationToken);
 
                     _logger.Info("API", $"{evt.ActionName}完成，保存变量 \"{variableName}\"，length={result.Body.Length}");
                     break;
@@ -369,13 +369,13 @@ public class PlaybackService : IPlaybackService
         foreach (var key in keys)
         {
             _simulator.SimulateKeyPress(key);
-            await Task.Delay(35, cancellationToken);
+            await Task.Delay(20, cancellationToken);
         }
 
         for (var i = keys.Count - 1; i >= 0; i--)
         {
             _simulator.SimulateKeyRelease(keys[i]);
-            await Task.Delay(35, cancellationToken);
+            await Task.Delay(20, cancellationToken);
         }
 
         _logger.Info("Playback", $"按键操作完成: {comboText}");
@@ -412,7 +412,7 @@ public class PlaybackService : IPlaybackService
 
         try
         {
-            var childEvents = PreparePlaybackEvents(segment.RecordedEvents);
+            var childEvents = PreparePlaybackEvents(segment.RecordedEvents, resetFirstDelay: true, collapseDragDuration: true);
             for (var i = 0; i < childEvents.Count; i++)
             {
                 timeoutCts.Token.ThrowIfCancellationRequested();
@@ -472,40 +472,126 @@ public class PlaybackService : IPlaybackService
             : Task.Delay(delayMs, cancellationToken);
     }
 
-    private static List<InputEvent> PreparePlaybackEvents(IEnumerable<InputEvent> events)
+    private static List<InputEvent> PreparePlaybackEvents(
+        IEnumerable<InputEvent> events,
+        bool resetFirstDelay = false,
+        bool collapseDragDuration = false)
     {
         var filtered = new List<InputEvent>();
         long pendingDelta = 0;
-        var mouseDown = false;
+        var pressedButtons = new HashSet<int>();
+        var orphanMoves = new List<InputEvent>();
+        var dragMoves = new List<InputEvent>();
 
         foreach (var evt in events)
         {
-            if (evt.EventType == InputEventType.MouseDown)
+            switch (evt.EventType)
             {
-                mouseDown = true;
-            }
-            else if (evt.EventType == InputEventType.MouseUp)
-            {
-                if (!mouseDown)
-                {
+                case InputEventType.MouseDown:
+                    pendingDelta += SumDeltas(orphanMoves);
+                    orphanMoves.Clear();
+                    FlushCollapsedDragMoves(filtered, dragMoves, null, ref pendingDelta, collapseDragDuration);
+                    pressedButtons.Add(evt.MouseButton);
+                    filtered.Add(CloneEvent(evt, evt.DeltaMs + pendingDelta));
+                    pendingDelta = 0;
+                    break;
+
+                case InputEventType.MouseUp when pressedButtons.Remove(evt.MouseButton):
+                    FlushCollapsedDragMoves(filtered, dragMoves, evt, ref pendingDelta, collapseDragDuration);
+                    filtered.Add(CloneEvent(evt, evt.DeltaMs + pendingDelta));
+                    pendingDelta = 0;
+                    break;
+
+                case InputEventType.MouseUp when orphanMoves.Count > 0:
+                    AddRepairedDrag(filtered, orphanMoves, evt, pendingDelta, collapseDragDuration);
+                    orphanMoves.Clear();
+                    pendingDelta = 0;
+                    break;
+
+                case InputEventType.MouseUp:
                     pendingDelta += evt.DeltaMs;
-                    continue;
-                }
+                    break;
 
-                mouseDown = false;
+                case InputEventType.MouseMove when pressedButtons.Count == 0:
+                    orphanMoves.Add(evt);
+                    break;
+
+                case InputEventType.MouseMove:
+                    dragMoves.Add(evt);
+                    break;
+
+                default:
+                    pendingDelta += SumDeltas(orphanMoves);
+                    orphanMoves.Clear();
+                    FlushCollapsedDragMoves(filtered, dragMoves, null, ref pendingDelta, collapseDragDuration);
+                    filtered.Add(CloneEvent(evt, evt.DeltaMs + pendingDelta));
+                    pendingDelta = 0;
+                    break;
             }
-
-            if (evt.EventType == InputEventType.MouseMove && !mouseDown)
-            {
-                pendingDelta += evt.DeltaMs;
-                continue;
-            }
-
-            filtered.Add(CloneEvent(evt, evt.DeltaMs + pendingDelta));
-            pendingDelta = 0;
         }
 
+        if (resetFirstDelay && filtered.Count > 0)
+            filtered[0].DeltaMs = 0;
+
         return filtered;
+    }
+
+    private static void AddRepairedDrag(
+        ICollection<InputEvent> target,
+        IReadOnlyList<InputEvent> orphanMoves,
+        InputEvent mouseUp,
+        long pendingDelta,
+        bool collapseDragDuration)
+    {
+        var firstMove = orphanMoves[0];
+        var mouseDownDelta = collapseDragDuration ? 0 : firstMove.DeltaMs + pendingDelta;
+        target.Add(CloneMouseDownFromMove(firstMove, mouseUp.MouseButton, mouseDownDelta));
+
+        var finalMoveDelta = collapseDragDuration ? 0 : SumDeltas(orphanMoves.Skip(1));
+        target.Add(CloneMouseMoveFromEvent(mouseUp, finalMoveDelta));
+        target.Add(CloneEvent(mouseUp, collapseDragDuration ? 0 : mouseUp.DeltaMs));
+    }
+
+    private static void FlushCollapsedDragMoves(
+        ICollection<InputEvent> target,
+        List<InputEvent> dragMoves,
+        InputEvent? finalPoint,
+        ref long pendingDelta,
+        bool collapseDragDuration)
+    {
+        if (dragMoves.Count == 0)
+            return;
+
+        var source = finalPoint ?? dragMoves[^1];
+        var deltaMs = collapseDragDuration ? 0 : SumDeltas(dragMoves) + pendingDelta;
+        target.Add(CloneMouseMoveFromEvent(source, deltaMs));
+        dragMoves.Clear();
+        pendingDelta = 0;
+    }
+
+    private static InputEvent CloneMouseDownFromMove(InputEvent source, int mouseButton, long deltaMs)
+    {
+        var clone = CloneEvent(source, deltaMs);
+        clone.EventType = InputEventType.MouseDown;
+        clone.MouseButton = mouseButton;
+        return clone;
+    }
+
+    private static InputEvent CloneMouseMoveFromEvent(InputEvent source, long deltaMs)
+    {
+        var clone = CloneEvent(source, deltaMs);
+        clone.EventType = InputEventType.MouseMove;
+        clone.MouseButton = 0;
+        return clone;
+    }
+
+    private static long SumDeltas(IEnumerable<InputEvent> events)
+    {
+        var total = 0L;
+        foreach (var evt in events)
+            total += evt.DeltaMs;
+
+        return total;
     }
 
     private static InputEvent CloneEvent(InputEvent evt, long deltaMs)

@@ -138,7 +138,7 @@ public partial class ActionListViewModel : ObservableObject
         if (result != true || !started)
             return;
 
-        var recorded = TrimOwnAppEvents(_recordingService.GetRecordedEvents()).ToList();
+        var recorded = NormalizeRecordedEvents(_recordingService.GetRecordedEvents());
         if (recorded.Count == 0)
         {
             System.Windows.MessageBox.Show(
@@ -462,6 +462,147 @@ public partial class ActionListViewModel : ObservableObject
             action.DeltaMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
         else
             action.AfterFoundDelayMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
+    }
+
+    public void EditAction(InputEvent action)
+    {
+        if (!Actions.Contains(action))
+            return;
+
+        SelectedAction = action;
+        SelectedIndex = Actions.IndexOf(action);
+
+        switch (action.EventType)
+        {
+            case InputEventType.PasteText:
+                EditPasteTextAction(action);
+                return;
+
+            case InputEventType.ImageClick:
+            case InputEventType.WaitImage:
+                EditImageAction(action);
+                return;
+
+            case InputEventType.KeyCombo:
+                EditKeyComboAction(action);
+                return;
+
+            case InputEventType.WaitText:
+            case InputEventType.ClickText:
+                EditTextPatternAction(action);
+                return;
+
+            case InputEventType.WaitWindow:
+            case InputEventType.ActivateWindow:
+                EditWindowTitleAction(action);
+                return;
+
+            case InputEventType.ReadData:
+            case InputEventType.SubmitData:
+            case InputEventType.Notify:
+                EditApiAction(action);
+                return;
+
+            default:
+                System.Windows.MessageBox.Show(
+                    "这个动作暂时没有可直接修改的内容。\n\n可以右键删除后重新添加，或者直接点延迟时间、超时时间修改。",
+                    "修改这一步",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Information);
+                return;
+        }
+    }
+
+    private static void EditPasteTextAction(InputEvent action)
+    {
+        var dialog = new PasteTextDialog(action.TextPattern)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(dialog.TextContent))
+            action.TextPattern = dialog.TextContent;
+    }
+
+    private void EditImageAction(InputEvent action)
+    {
+        var path = PickImage();
+        if (path is null)
+            return;
+
+        action.ImagePath = CopyImageToProfile(path);
+        if (action.MatchThreshold <= 0)
+            action.MatchThreshold = 0.92;
+    }
+
+    private static void EditKeyComboAction(InputEvent action)
+    {
+        var dialog = new KeyCaptureDialog
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || string.IsNullOrWhiteSpace(dialog.SelectedKeyCombo))
+            return;
+
+        var normalized = NormalizeKeyComboText(dialog.SelectedKeyCombo);
+        var binding = HotkeySettings.ParseHotkey(normalized);
+        if (!binding.IsValid)
+        {
+            System.Windows.MessageBox.Show(
+                "这个按键暂时不支持。\n\n可以换一个常用按键，例如 Ctrl+A、Alt+F4、F5、Enter。",
+                "修改按键操作",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Warning);
+            return;
+        }
+
+        action.TextPattern = normalized;
+    }
+
+    private static void EditTextPatternAction(InputEvent action)
+    {
+        var title = action.EventType == InputEventType.WaitText
+            ? "修改等待文字"
+            : "修改点击文字";
+        var prompt = action.EventType == InputEventType.WaitText
+            ? "输入要等待出现的文字："
+            : "输入看到后要点击的文字：";
+
+        var text = PromptText(title, prompt, action.TextPattern ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(text))
+            action.TextPattern = text.Trim();
+    }
+
+    private static void EditWindowTitleAction(InputEvent action)
+    {
+        var title = action.EventType == InputEventType.WaitWindow
+            ? "修改等待窗口"
+            : "修改切换窗口";
+        var text = PromptText(title, "输入窗口标题里包含的字：", action.WindowTitle ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(text))
+            action.WindowTitle = text.Trim();
+    }
+
+    private static void EditApiAction(InputEvent action)
+    {
+        var url = PromptText("修改网址", "输入网址：", action.RequestUrl ?? string.Empty);
+        if (!string.IsNullOrWhiteSpace(url))
+            action.RequestUrl = url.Trim();
+
+        if (action.EventType == InputEventType.SubmitData)
+        {
+            var body = PromptText("修改提交内容", "输入提交内容：", action.RequestBody ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(body))
+                action.RequestBody = body;
+        }
+
+        if (action.EventType == InputEventType.Notify)
+        {
+            var message = PromptText("修改通知内容", "输入通知内容：", action.RequestBody ?? string.Empty);
+            if (!string.IsNullOrWhiteSpace(message))
+                action.RequestBody = message;
+        }
     }
 
     [RelayCommand]
@@ -960,6 +1101,123 @@ public partial class ActionListViewModel : ObservableObject
 
         for (var i = start; i <= end; i++)
             yield return events[i];
+    }
+
+    private static List<InputEvent> NormalizeRecordedEvents(IList<InputEvent> events)
+    {
+        var normalized = new List<InputEvent>();
+        var pressedButtons = new HashSet<int>();
+        var orphanMoves = new List<InputEvent>();
+        long pendingDelta = 0;
+
+        foreach (var evt in TrimOwnAppEvents(events))
+        {
+            switch (evt.EventType)
+            {
+                case InputEventType.MouseDown:
+                    pendingDelta += SumDeltas(orphanMoves);
+                    orphanMoves.Clear();
+                    pressedButtons.Add(evt.MouseButton);
+                    AddWithDelta(normalized, evt, evt.DeltaMs + pendingDelta);
+                    pendingDelta = 0;
+                    break;
+
+                case InputEventType.MouseUp when pressedButtons.Remove(evt.MouseButton):
+                    AddWithDelta(normalized, evt, evt.DeltaMs + pendingDelta);
+                    pendingDelta = 0;
+                    break;
+
+                case InputEventType.MouseUp when orphanMoves.Count > 0:
+                    AddRepairedDrag(normalized, orphanMoves, evt, pendingDelta);
+                    orphanMoves.Clear();
+                    pendingDelta = 0;
+                    break;
+
+                case InputEventType.MouseUp:
+                    pendingDelta += evt.DeltaMs;
+                    break;
+
+                case InputEventType.MouseMove when pressedButtons.Count == 0:
+                    orphanMoves.Add(evt);
+                    break;
+
+                case InputEventType.MouseMove:
+                    pendingDelta += SumDeltas(orphanMoves);
+                    orphanMoves.Clear();
+                    AddWithDelta(normalized, evt, evt.DeltaMs + pendingDelta);
+                    pendingDelta = 0;
+                    break;
+
+                default:
+                    pendingDelta += SumDeltas(orphanMoves);
+                    orphanMoves.Clear();
+                    AddWithDelta(normalized, evt, evt.DeltaMs + pendingDelta);
+                    pendingDelta = 0;
+                    break;
+            }
+        }
+
+        if (normalized.Count > 0)
+            normalized[0].DeltaMs = 0;
+
+        return normalized;
+    }
+
+    private static void AddRepairedDrag(
+        ICollection<InputEvent> target,
+        IReadOnlyList<InputEvent> orphanMoves,
+        InputEvent mouseUp,
+        long pendingDelta)
+    {
+        var firstMove = orphanMoves[0];
+        target.Add(CreateSyntheticMouseDown(firstMove, mouseUp.MouseButton, firstMove.DeltaMs + pendingDelta));
+
+        for (var i = 0; i < orphanMoves.Count; i++)
+        {
+            var move = orphanMoves[i];
+            AddWithDelta(target, move, i == 0 ? 0 : move.DeltaMs);
+        }
+
+        target.Add(mouseUp);
+    }
+
+    private static InputEvent CreateSyntheticMouseDown(InputEvent source, int mouseButton, long deltaMs)
+    {
+        return new InputEvent
+        {
+            EventType = InputEventType.MouseDown,
+            MouseButton = mouseButton,
+            X = source.X,
+            Y = source.Y,
+            DeltaMs = deltaMs,
+            UseWindowRelativeCoordinates = source.UseWindowRelativeCoordinates,
+            RelativeX = source.RelativeX,
+            RelativeY = source.RelativeY,
+            RecordedWindowWidth = source.RecordedWindowWidth,
+            RecordedWindowHeight = source.RecordedWindowHeight,
+            UseWindowClientCoordinates = source.UseWindowClientCoordinates,
+            ClientRelativeX = source.ClientRelativeX,
+            ClientRelativeY = source.ClientRelativeY,
+            RecordedClientWidth = source.RecordedClientWidth,
+            RecordedClientHeight = source.RecordedClientHeight,
+            WindowTitle = source.WindowTitle,
+            WindowProcessName = source.WindowProcessName
+        };
+    }
+
+    private static void AddWithDelta(ICollection<InputEvent> target, InputEvent evt, long deltaMs)
+    {
+        evt.DeltaMs = deltaMs;
+        target.Add(evt);
+    }
+
+    private static long SumDeltas(IEnumerable<InputEvent> events)
+    {
+        var total = 0L;
+        foreach (var evt in events)
+            total += evt.DeltaMs;
+
+        return total;
     }
 
     private static bool IsOwnAppMouseEvent(InputEvent evt)
