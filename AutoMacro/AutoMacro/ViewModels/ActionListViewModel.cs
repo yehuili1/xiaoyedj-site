@@ -246,25 +246,48 @@ public partial class ActionListViewModel : ObservableObject
     [RelayCommand]
     private void AddImageClick()
     {
+        AddImageLocateAction(
+            InputEventType.ImageClick,
+            "看到图片就点击",
+            "延迟执行时间：图片出现后，等多少秒再点击？",
+            "是否继续添加下一张点击图片？\n点“是”会继续选择截图。");
+    }
+
+    [RelayCommand]
+    private void AddImageMove()
+    {
+        AddImageLocateAction(
+            InputEventType.ImageMove,
+            "看到图片就移动",
+            "延迟执行时间：图片出现后，等多少秒再移动鼠标？",
+            "是否继续添加下一张移动图片？\n点“是”会继续选择截图。");
+    }
+
+    private void AddImageLocateAction(
+        InputEventType eventType,
+        string title,
+        string delayPrompt,
+        string continuePrompt)
+    {
         while (true)
         {
             var path = PickImage();
             if (path is null) return;
 
-            var delaySeconds = PromptNumber("看到图片就点击", "延迟执行时间：图片出现后，等多少秒再点击？", 1);
+            var delaySeconds = PromptNumber(title, delayPrompt, 1);
             if (delaySeconds is null) return;
 
-            var timeoutSeconds = PromptNumber("看到图片就点击", "超时时间：最长等待图片出现多少秒？", 10);
+            var timeoutSeconds = PromptNumber(title, "超时时间：最长等待图片出现多少秒？", 10);
             if (timeoutSeconds is null) return;
 
             var action = new InputEvent
             {
-                EventType = InputEventType.ImageClick,
+                EventType = eventType,
                 ImagePath = CopyImageToProfile(path),
-                TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600),
+                TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 0, 600),
                 AfterFoundDelayMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600),
                 MatchThreshold = 0.92,
-                DeltaMs = 100
+                DeltaMs = 0
             };
 
             InsertAction(action);
@@ -272,7 +295,7 @@ public partial class ActionListViewModel : ObservableObject
             SelectedIndex = Actions.IndexOf(action);
 
             var continueAdd = System.Windows.MessageBox.Show(
-                "是否继续添加下一张图片？\n点“是”会继续选择截图。",
+                continuePrompt,
                 "继续添加",
                 System.Windows.MessageBoxButton.YesNo,
                 System.Windows.MessageBoxImage.Question);
@@ -355,21 +378,22 @@ public partial class ActionListViewModel : ObservableObject
             return;
         }
 
-        if (SelectedAction.EventType == InputEventType.ImageClick)
+        if (SelectedAction.EventType is InputEventType.ImageClick or InputEventType.ImageMove)
         {
+            var isMove = SelectedAction.EventType == InputEventType.ImageMove;
             var delaySeconds = PromptNumber(
                 "时间设置",
-                "图片出现后，延迟多少秒再点击：",
+                isMove ? "图片出现后，延迟多少秒再移动鼠标：" : "图片出现后，延迟多少秒再点击：",
                 Math.Max(0, SelectedAction.AfterFoundDelayMs / 1000.0));
             if (delaySeconds is null) return;
 
             var timeoutSeconds = PromptNumber(
                 "时间设置",
                 "最长等待图片出现多少秒：",
-                Math.Max(1, SelectedAction.TimeoutMs / 1000.0));
+                Math.Max(0, SelectedAction.TimeoutMs / 1000.0));
             if (timeoutSeconds is null) return;
 
-            SelectedAction.TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600);
+            SelectedAction.TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 0, 600);
             SelectedAction.AfterFoundDelayMs = SecondsToMilliseconds(delaySeconds.Value, 0, 600);
             return;
         }
@@ -425,10 +449,13 @@ public partial class ActionListViewModel : ObservableObject
         var timeoutSeconds = PromptNumber(
             "修改超时时间",
             "超时时间：最长等待多少秒？",
-            Math.Max(1, action.TimeoutMs / 1000.0));
+            Math.Max(0, action.TimeoutMs / 1000.0));
         if (timeoutSeconds is null) return;
 
-        action.TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, 1, 600);
+        var minTimeoutSeconds = action.EventType is InputEventType.ImageClick or InputEventType.ImageMove
+            ? 0
+            : 1;
+        action.TimeoutMs = SecondsToMilliseconds(timeoutSeconds.Value, minTimeoutSeconds, 600);
     }
 
     [RelayCommand]
@@ -447,6 +474,7 @@ public partial class ActionListViewModel : ObservableObject
             InputEventType.KeyCombo => "延迟时间：等多少秒后执行按键？",
             InputEventType.RecordedSegment => "延迟时间：等多少秒后开始执行这段录制？",
             InputEventType.PasteText => "延迟时间：等多少秒后粘贴文字？",
+            InputEventType.ImageMove => "延迟时间：图片出现后，等多少秒再移动鼠标？",
             _ => "延迟时间：图片出现后，等多少秒再点击？"
         };
         var defaultValue = usesDeltaDelay
@@ -479,6 +507,7 @@ public partial class ActionListViewModel : ObservableObject
                 return;
 
             case InputEventType.ImageClick:
+            case InputEventType.ImageMove:
             case InputEventType.WaitImage:
                 EditImageAction(action);
                 return;
@@ -717,7 +746,7 @@ public partial class ActionListViewModel : ObservableObject
             return;
         }
 
-        if (SelectedAction.EventType is InputEventType.ImageClick or InputEventType.WaitImage)
+        if (SelectedAction.EventType is InputEventType.ImageClick or InputEventType.ImageMove or InputEventType.WaitImage)
         {
             await TestImageStep(SelectedAction);
             return;
@@ -747,7 +776,7 @@ public partial class ActionListViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(action.ImagePath))
         {
             System.Windows.MessageBox.Show(
-                "请先选中一个“看到图片就点击”或“等待图片出现”的步骤。",
+                "请先选中一个“看到图片就点击”“看到图片就移动”或“等待图片出现”的步骤。",
                 "测试图片",
                 System.Windows.MessageBoxButton.OK,
                 System.Windows.MessageBoxImage.Information);
@@ -776,8 +805,14 @@ public partial class ActionListViewModel : ObservableObject
 
             if (result.Found)
             {
+                var locationText = action.EventType switch
+                {
+                    InputEventType.ImageClick => "会点击的位置",
+                    InputEventType.ImageMove => "会移动到的位置",
+                    _ => "找到的位置"
+                };
                 System.Windows.MessageBox.Show(
-                    $"找到了。\n\n会点击的位置：({result.X}, {result.Y})\n匹配度：{result.Score:0.000}",
+                    $"找到了。\n\n{locationText}：({result.X}, {result.Y})\n匹配度：{result.Score:0.000}",
                     "测试成功",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Information);

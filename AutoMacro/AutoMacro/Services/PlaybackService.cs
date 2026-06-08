@@ -260,6 +260,27 @@ public class PlaybackService : IPlaybackService
                     break;
                 }
 
+            case InputEventType.ImageMove:
+                {
+                    var found = await _imageRecognitionService.FindImageAsync(
+                        evt.ImagePath ?? string.Empty,
+                        evt.MatchThreshold,
+                        evt.TimeoutMs,
+                        cancellationToken);
+                    if (!found.Found)
+                    {
+                        SkipMissingImage(evt, "图片移动");
+                        break;
+                    }
+
+                    if (evt.AfterFoundDelayMs > 0)
+                        await Task.Delay(evt.AfterFoundDelayMs, cancellationToken);
+
+                    _simulator.SimulateMouseMovement((short)found.X, (short)found.Y);
+                    _logger.Info("Playback", $"图片移动完成: {Path.GetFileName(evt.ImagePath)}, x={found.X}, y={found.Y}, score={found.Score:0.000}");
+                    break;
+                }
+
             case InputEventType.WaitText:
                 {
                     var found = await _ocrService.FindTextAsync(

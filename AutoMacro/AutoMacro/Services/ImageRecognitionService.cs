@@ -52,7 +52,8 @@ public class ImageRecognitionService : IImageRecognitionService
         CancellationToken cancellationToken)
     {
         var normalizedThreshold = Math.Clamp(threshold <= 0 ? 0.92 : threshold, 0.5, 1.0);
-        var endAt = DateTime.UtcNow.AddMilliseconds(Math.Max(0, timeoutMs));
+        var timeout = Math.Max(0, timeoutMs);
+        var endAt = DateTime.UtcNow.AddMilliseconds(timeout);
         var bestScore = 0d;
         var bestX = 0;
         var bestY = 0;
@@ -92,10 +93,14 @@ public class ImageRecognitionService : IImageRecognitionService
                 bestY = result.Y;
             }
 
-            await Task.Delay(250, cancellationToken);
+            var remainingMs = (int)Math.Ceiling((endAt - DateTime.UtcNow).TotalMilliseconds);
+            if (remainingMs <= 0)
+                break;
+
+            await Task.Delay(Math.Min(100, remainingMs), cancellationToken);
         } while (DateTime.UtcNow < endAt);
 
-        _logger.Error("Image", $"等待图片超时: {Path.GetFileName(imagePath)}, bestScore={bestScore:0.000}", captureScreenshot: true);
+        _logger.Warn("Image", $"等待图片超时: {Path.GetFileName(imagePath)}, bestScore={bestScore:0.000}");
         return (false, bestX, bestY, bestScore);
     }
 
@@ -254,7 +259,7 @@ public class ImageRecognitionService : IImageRecognitionService
                     bestY = offsetY + maxLocation.Y + candidate.Height / 2;
                 }
 
-                if (Math.Abs(scale - 1.0) <= 0.001 && maxValue >= threshold)
+                if (maxValue >= GetEarlyReturnThreshold(threshold))
                     return (true, offsetX + maxLocation.X + candidate.Width / 2, offsetY + maxLocation.Y + candidate.Height / 2, maxValue);
             }
             finally
@@ -264,6 +269,14 @@ public class ImageRecognitionService : IImageRecognitionService
         }
 
         return (bestScore >= threshold, bestX, bestY, bestScore);
+    }
+
+    private static double GetEarlyReturnThreshold(double threshold)
+    {
+        if (threshold >= 0.9)
+            return threshold;
+
+        return Math.Min(0.92, Math.Max(threshold, threshold + 0.08));
     }
 
     private static bool IsLowVarianceTemplate(Mat templateGray)

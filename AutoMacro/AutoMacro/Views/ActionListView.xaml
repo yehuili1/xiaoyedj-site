@@ -45,6 +45,10 @@
                 <ui:Button Content="看到图片就点击"
                            Command="{Binding AddImageClickCommand}"
                            Margin="0,0,4,0" />
+                <ui:Button Content="看到图片就移动"
+                           ToolTip="识别到图片后只把鼠标移过去，不点击"
+                           Command="{Binding AddImageMoveCommand}"
+                           Margin="0,0,4,0" />
                 <ui:Button Content="测试一下"
                            ToolTip="测试选中的图片或文字步骤"
                            Command="{Binding TestSelectedStepCommand}"
