@@ -19,6 +19,10 @@ public class AppSettings
 
     public CloseBehavior CloseBehavior { get; set; } = CloseBehavior.AskEveryTime;
     public bool StartWithWindows { get; set; }
+    public double? MiniWindowLeft { get; set; }
+    public double? MiniWindowTop { get; set; }
+    public bool MiniWindowIsDocked { get; set; }
+    public string? MiniWindowDockEdge { get; set; }
 
     public static readonly string SettingsFilePath =
         Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory, "app_settings.json");

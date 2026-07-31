@@ -34,6 +34,7 @@ public partial class MainWindow : FluentWindow
 
         // 监听状态变化更新托盘图标
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+        ViewModel.MiniModeRequested += (_, _) => Dispatcher.Invoke(SwitchToMiniMode);
     }
 
     protected override void OnClosing(CancelEventArgs e)
@@ -115,12 +116,20 @@ public partial class MainWindow : FluentWindow
 
     public void SwitchToMiniMode()
     {
+        if (_miniWindow is not null)
+        {
+            _miniWindow.Activate();
+            return;
+        }
+
         Hide();
-        _miniWindow = new Views.MiniWindow(ViewModel);
+        _miniWindow = new Views.MiniWindow(ViewModel, _appSettings);
+        _miniWindow.Closed += (_, _) => _miniWindow = null;
         _miniWindow.RestoreRequested += (_, _) =>
         {
-            _miniWindow.Close();
+            var miniWindow = _miniWindow;
             _miniWindow = null;
+            miniWindow?.Close();
             Show();
             WindowState = WindowState.Normal;
             Activate();

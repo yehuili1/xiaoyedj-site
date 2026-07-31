@@ -39,6 +39,12 @@ public class WindowAutomationService : IWindowAutomationService
     [DllImport("user32.dll")]
     private static extern bool ClientToScreen(IntPtr hWnd, ref Point point);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(Point point);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
 
@@ -52,6 +58,9 @@ public class WindowAutomationService : IWindowAutomationService
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    private const uint GaRoot = 2;
+    private const uint GaRootOwner = 3;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct Rect
@@ -78,6 +87,32 @@ public class WindowAutomationService : IWindowAutomationService
     {
         var handle = GetForegroundWindow();
         return handle == IntPtr.Zero ? null : CreateSnapshot(handle);
+    }
+
+    public WindowSnapshot? GetWindowSnapshotAtPoint(int x, int y)
+    {
+        var handle = WindowFromPoint(new Point { X = x, Y = y });
+        if (handle == IntPtr.Zero)
+            return null;
+
+        var candidates = new[]
+        {
+            GetAncestor(handle, GaRoot),
+            GetAncestor(handle, GaRootOwner),
+            handle
+        };
+
+        foreach (var candidate in candidates.Distinct())
+        {
+            if (candidate == IntPtr.Zero)
+                continue;
+
+            var snapshot = CreateSnapshot(candidate);
+            if (snapshot is not null && IsUsableWindow(snapshot) && ContainsPoint(snapshot, x, y))
+                return snapshot;
+        }
+
+        return null;
     }
 
     public bool TryResolvePoint(InputEvent evt, out int x, out int y)
@@ -255,6 +290,14 @@ public class WindowAutomationService : IWindowAutomationService
                snapshot.Top > -30000 &&
                snapshot.Width >= 80 &&
                snapshot.Height >= 80;
+    }
+
+    private static bool ContainsPoint(WindowSnapshot snapshot, int x, int y)
+    {
+        return x >= snapshot.Left &&
+               x <= snapshot.Left + snapshot.Width &&
+               y >= snapshot.Top &&
+               y <= snapshot.Top + snapshot.Height;
     }
 
     private static string GetStableTitleKeyword(string title)

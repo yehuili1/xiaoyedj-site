@@ -3,7 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         Title="全能脚本V2.2.2"
-        Width="380" Height="72"
+        Width="500" Height="92"
         ResizeMode="NoResize"
         WindowStyle="None"
         AllowsTransparency="True"
@@ -18,16 +18,17 @@
             CornerRadius="8"
             BorderBrush="#60FFFFFF"
             BorderThickness="1"
-            Padding="10,6">
+            Padding="12,8">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
 
             <!-- 状态指示灯 -->
-            <Ellipse Grid.Column="0" Width="10" Height="10" Margin="0,0,8,0">
+            <Ellipse Grid.Column="0" Width="12" Height="12" Margin="0,0,10,0">
                 <Ellipse.Style>
                     <Style TargetType="Ellipse">
                         <Setter Property="Fill" Value="#4CAF50" />
@@ -45,26 +46,26 @@
 
             <!-- 当前步骤预览 -->
             <Border Grid.Column="1"
-                    Width="54"
-                    Height="42"
-                    Margin="0,0,10,0"
+                    Width="70"
+                    Height="56"
+                    Margin="0,0,12,0"
                     Background="#2AFFFFFF"
                     BorderBrush="#35FFFFFF"
                     BorderThickness="1"
-                    CornerRadius="4">
+                    CornerRadius="6">
                 <Grid ClipToBounds="True">
                     <Image Source="{Binding CurrentStepImagePath}"
                            Stretch="Uniform"
                            Visibility="{Binding CurrentStepHasImage, Converter={StaticResource BooleanToVisibilityConverter}}" />
                     <TextBlock Text="{Binding CurrentStepBadgeText}"
                                Foreground="White"
-                               FontSize="12"
+                               FontSize="13"
                                FontWeight="SemiBold"
                                TextAlignment="Center"
                                TextWrapping="Wrap"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center"
-                               MaxWidth="48">
+                               MaxWidth="62">
                         <TextBlock.Style>
                             <Style TargetType="TextBlock">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -80,32 +81,55 @@
             </Border>
 
             <!-- 方案名 + 当前步骤 -->
-            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,10,0">
+            <StackPanel Grid.Column="2" VerticalAlignment="Center" Margin="0,0,12,0">
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="{Binding SelectedProfile.Name}"
                                Foreground="#AAAAAA"
-                               FontSize="11"
+                               FontSize="12"
                                TextTrimming="CharacterEllipsis"
-                               MaxWidth="90"
+                               MaxWidth="110"
                                Margin="0,0,6,0" />
-                    <TextBlock Text="|" Foreground="#555555" FontSize="11" Margin="0,0,6,0" />
+                    <TextBlock Text="|" Foreground="#555555" FontSize="12" Margin="0,0,6,0" />
                     <TextBlock Text="{Binding StatusText}"
                                Foreground="#DDDDDD"
-                               FontSize="11"
+                               FontSize="12"
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
                 <TextBlock Text="{Binding CurrentStepText}"
                            Foreground="White"
-                           FontSize="12"
+                           FontSize="14"
                            FontWeight="SemiBold"
                            TextTrimming="CharacterEllipsis"
-                           MaxWidth="250" />
-                <TextBlock Text="{Binding CurrentStepDetail}"
-                           Foreground="#BBBBBB"
-                           FontSize="11"
-                           TextTrimming="CharacterEllipsis"
-                           MaxWidth="250" />
+                           MaxWidth="270"
+                           Margin="0,4,0,0" />
             </StackPanel>
+
+            <!-- 延迟倒计时 -->
+            <Border Grid.Column="3"
+                    Width="96"
+                    Height="58"
+                    VerticalAlignment="Center"
+                    Background="#263238"
+                    BorderBrush="#55FFFFFF"
+                    BorderThickness="1"
+                    CornerRadius="7"
+                    Padding="6,4">
+                <StackPanel HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="{Binding CurrentDelayLabel}"
+                               Foreground="#B9C7D0"
+                               FontSize="11"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="{Binding CurrentDelayText}"
+                               Foreground="White"
+                               FontSize="22"
+                               FontWeight="SemiBold"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center"
+                               Margin="0,1,0,0" />
+                </StackPanel>
+            </Border>
         </Grid>
     </Border>
 </Window>

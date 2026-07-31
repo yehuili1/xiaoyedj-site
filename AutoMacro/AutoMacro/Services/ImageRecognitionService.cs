@@ -12,7 +12,9 @@ namespace AutoMacro.Services;
 
 public class ImageRecognitionService : IImageRecognitionService
 {
-    private static readonly double[] TemplateScales = { 1.0, 0.95, 1.05, 0.9, 1.1, 0.85, 1.15, 0.8, 1.2 };
+    private static readonly double[] TemplateScales = { 1.0, 0.98, 1.02, 0.95, 1.05, 0.92, 1.08, 0.9, 1.1, 0.85, 1.15, 0.8, 1.2, 0.75, 1.25 };
+    private static readonly double[] BalancedTemplateScales = { 1.0, 0.98, 1.02, 0.95, 1.05, 0.92, 1.08 };
+    private static readonly double[] QuickTemplateScales = { 1.0, 0.98, 1.02 };
 
     private readonly IRunLogger _logger;
     private bool _openCvFallbackLogged;
@@ -66,7 +68,9 @@ public class ImageRecognitionService : IImageRecognitionService
 
         using var templateSource = new Bitmap(imagePath);
         using var template = CloneAs24Bpp(templateSource);
-        var effectiveThreshold = GetEffectiveThreshold(normalizedThreshold, template.Width, template.Height);
+        var isColorRichTemplate = IsColorRichIconTemplate(template);
+        var effectiveThreshold = GetEffectiveThreshold(normalizedThreshold, template, isColorRichTemplate);
+        var templateScales = GetTemplateScales(timeout);
         if (effectiveThreshold < normalizedThreshold)
         {
             _logger.Info(
@@ -79,7 +83,7 @@ public class ImageRecognitionService : IImageRecognitionService
             cancellationToken.ThrowIfCancellationRequested();
             var capture = CaptureScreen();
             using var screen = capture.Bitmap;
-            var result = FindInBitmap(screen, template, effectiveThreshold, capture.Left, capture.Top);
+            var result = FindInBitmap(screen, template, effectiveThreshold, capture.Left, capture.Top, templateScales, isColorRichTemplate);
             if (result.Found)
             {
                 _logger.Info("Image", $"找到图片: {Path.GetFileName(imagePath)}, score={result.Score:0.000}, x={result.X}, y={result.Y}");
@@ -100,20 +104,86 @@ public class ImageRecognitionService : IImageRecognitionService
             await Task.Delay(Math.Min(100, remainingMs), cancellationToken);
         } while (DateTime.UtcNow < endAt);
 
-        _logger.Warn("Image", $"等待图片超时: {Path.GetFileName(imagePath)}, bestScore={bestScore:0.000}");
+        _logger.Warn("Image", $"等待图片超时: {Path.GetFileName(imagePath)}, bestScore={bestScore:0.000}, threshold={effectiveThreshold:0.000}, bestX={bestX}, bestY={bestY}");
+        _logger.CaptureScreenshot($"ImageMiss_{Path.GetFileNameWithoutExtension(imagePath)}");
         return (false, bestX, bestY, bestScore);
     }
 
-    private static double GetEffectiveThreshold(double threshold, int templateWidth, int templateHeight)
+    private static double[] GetTemplateScales(int timeoutMs)
     {
+        if (timeoutMs <= 1200)
+            return QuickTemplateScales;
+
+        if (timeoutMs <= 5000)
+            return BalancedTemplateScales;
+
+        return TemplateScales;
+    }
+
+    private static double GetEffectiveThreshold(double threshold, Bitmap template, bool isColorRichTemplate)
+    {
+        var templateWidth = template.Width;
+        var templateHeight = template.Height;
         var area = templateWidth * templateHeight;
+        if (isColorRichTemplate)
+        {
+            if (IsWideColorListItemTemplate(templateWidth, templateHeight))
+                return Math.Min(threshold, 0.86);
+
+            if (area <= 22000 && templateHeight <= 140)
+                return Math.Min(threshold, 0.88);
+
+            if (area <= 36000 && templateHeight <= 180)
+                return Math.Min(threshold, 0.89);
+        }
+
         if (area <= 2500 || templateHeight <= 32)
-            return Math.Min(threshold, 0.80);
+            return Math.Min(threshold, 0.88);
 
         if (area <= 6000 || templateHeight <= 48)
-            return Math.Min(threshold, 0.86);
+            return Math.Min(threshold, 0.90);
+
+        if (area <= 12000 || templateHeight <= 64)
+            return Math.Min(threshold, 0.90);
 
         return threshold;
+    }
+
+    private static bool IsWideColorListItemTemplate(int templateWidth, int templateHeight)
+    {
+        return templateWidth >= 160 &&
+               templateHeight >= 60 &&
+               templateWidth / (double)templateHeight >= 2.2;
+    }
+
+    private static bool IsColorRichIconTemplate(Bitmap template)
+    {
+        var total = 0;
+        var colorful = 0;
+        var spreadTotal = 0d;
+        var stepX = Math.Max(1, template.Width / 24);
+        var stepY = Math.Max(1, template.Height / 24);
+
+        for (var y = 0; y < template.Height; y += stepY)
+        {
+            for (var x = 0; x < template.Width; x += stepX)
+            {
+                var color = template.GetPixel(x, y);
+                var max = Math.Max(color.R, Math.Max(color.G, color.B));
+                var min = Math.Min(color.R, Math.Min(color.G, color.B));
+                var spread = max - min;
+                spreadTotal += spread;
+                if (spread >= 32 && max >= 50)
+                    colorful++;
+
+                total++;
+            }
+        }
+
+        if (total == 0)
+            return false;
+
+        return spreadTotal / total >= 18 || (double)colorful / total >= 0.12;
     }
 
     private (bool Found, int X, int Y, double Score) FindInBitmap(
@@ -121,11 +191,13 @@ public class ImageRecognitionService : IImageRecognitionService
         Bitmap template,
         double threshold,
         int offsetX,
-        int offsetY)
+        int offsetY,
+        double[] templateScales,
+        bool allowPartialTemplates)
     {
         try
         {
-            return FindWithOpenCv(screen, template, threshold, offsetX, offsetY);
+            return FindWithOpenCv(screen, template, threshold, offsetX, offsetY, templateScales, allowPartialTemplates);
         }
         catch (Exception ex)
         {
@@ -193,7 +265,9 @@ public class ImageRecognitionService : IImageRecognitionService
         Bitmap template,
         double threshold,
         int offsetX,
-        int offsetY)
+        int offsetY,
+        double[] templateScales,
+        bool allowPartialTemplates)
     {
         using var screenColor = BitmapToMat(screen);
         using var templateColor = BitmapToMat(template);
@@ -208,20 +282,44 @@ public class ImageRecognitionService : IImageRecognitionService
 
         if (IsLowVarianceTemplate(templateGray))
         {
-            if (!_openCvFallbackLogged)
-            {
-                _openCvFallbackLogged = true;
-                _logger.Warn("Image", "模板图片细节太少，OpenCV 匹配容易误判，已切换到兼容算法。建议截取包含文字、图标或边框的图片。");
-            }
+            var lowVarianceEdgeResult = FindWithEdges(screenGray, templateGray, threshold, offsetX, offsetY, templateScales);
+            if (lowVarianceEdgeResult.Found)
+                return lowVarianceEdgeResult;
 
+            WarnOpenCvFallback("模板图片细节太少，OpenCV 匹配容易误判，已切换到兼容算法。建议截取包含文字、图标或边框的图片。");
             return FindWithSampling(screen, template, threshold, offsetX, offsetY);
         }
 
+        var bestResult = FindWithGrayScales(screenGray, templateGray, threshold, offsetX, offsetY, templateScales);
+        if (bestResult.Found)
+            return bestResult;
+
+        var edgeResult = FindWithEdges(screenGray, templateGray, threshold, offsetX, offsetY, templateScales);
+        if (edgeResult.Found)
+            return edgeResult;
+
+        var partialResult = allowPartialTemplates
+            ? FindWithPartialTemplates(screenGray, templateGray, threshold, offsetX, offsetY, templateScales)
+            : (false, 0, 0, 0);
+        if (partialResult.Found)
+            return partialResult;
+
+        var bestMiss = edgeResult.Score > bestResult.Score ? edgeResult : bestResult;
+        return partialResult.Score > bestMiss.Score ? partialResult : bestMiss;
+    }
+
+    private static (bool Found, int X, int Y, double Score) FindWithGrayScales(
+        Mat screenGray,
+        Mat templateGray,
+        double threshold,
+        int offsetX,
+        int offsetY,
+        double[] templateScales)
+    {
         var bestScore = 0d;
         var bestX = 0;
         var bestY = 0;
-
-        foreach (var scale in TemplateScales)
+        foreach (var scale in templateScales)
         {
             var width = Math.Max(1, (int)Math.Round(templateGray.Width * scale));
             var height = Math.Max(1, (int)Math.Round(templateGray.Height * scale));
@@ -252,15 +350,17 @@ public class ImageRecognitionService : IImageRecognitionService
                 if (double.IsNaN(maxValue) || double.IsInfinity(maxValue))
                     maxValue = 0;
 
-                if (maxValue > bestScore)
+                var verifiedScore = VerifyGrayContentScore(screenGray, candidate, maxLocation, maxValue);
+
+                if (verifiedScore > bestScore)
                 {
-                    bestScore = maxValue;
+                    bestScore = verifiedScore;
                     bestX = offsetX + maxLocation.X + candidate.Width / 2;
                     bestY = offsetY + maxLocation.Y + candidate.Height / 2;
                 }
 
-                if (maxValue >= GetEarlyReturnThreshold(threshold))
-                    return (true, offsetX + maxLocation.X + candidate.Width / 2, offsetY + maxLocation.Y + candidate.Height / 2, maxValue);
+                if (verifiedScore >= GetEarlyReturnThreshold(threshold))
+                    return (true, offsetX + maxLocation.X + candidate.Width / 2, offsetY + maxLocation.Y + candidate.Height / 2, verifiedScore);
             }
             finally
             {
@@ -271,12 +371,262 @@ public class ImageRecognitionService : IImageRecognitionService
         return (bestScore >= threshold, bestX, bestY, bestScore);
     }
 
+    private static (bool Found, int X, int Y, double Score) FindWithPartialTemplates(
+        Mat screenGray,
+        Mat templateGray,
+        double threshold,
+        int offsetX,
+        int offsetY,
+        double[] templateScales)
+    {
+        if (!ShouldTryPartialTemplates(templateGray))
+            return (false, 0, 0, 0);
+
+        var partialThreshold = GetPartialTemplateThreshold(threshold, templateGray.Width, templateGray.Height);
+        var bestScore = 0d;
+        var bestX = 0;
+        var bestY = 0;
+
+        foreach (var crop in BuildPartialTemplateCrops(templateGray.Width, templateGray.Height))
+        {
+            using var sourceCrop = new Mat(templateGray, crop);
+            if (IsLowVarianceTemplate(sourceCrop))
+                continue;
+
+            foreach (var scale in templateScales)
+            {
+                var width = Math.Max(1, (int)Math.Round(crop.Width * scale));
+                var height = Math.Max(1, (int)Math.Round(crop.Height * scale));
+                if (width > screenGray.Width || height > screenGray.Height)
+                    continue;
+
+                using var candidate = ResizeTemplate(sourceCrop, width, height, scale);
+                using var result = new Mat();
+                Cv2.MatchTemplate(screenGray, candidate, result, TemplateMatchModes.CCoeffNormed);
+                Cv2.MinMaxLoc(result, out _, out var maxValue, out _, out var maxLocation);
+
+                if (double.IsNaN(maxValue) || double.IsInfinity(maxValue))
+                    maxValue = 0;
+
+                var verifiedScore = VerifyGrayContentScore(screenGray, candidate, maxLocation, maxValue);
+                var scaledCropX = (int)Math.Round(crop.X * scale);
+                var scaledCropY = (int)Math.Round(crop.Y * scale);
+                var scaledTemplateWidth = (int)Math.Round(templateGray.Width * scale);
+                var scaledTemplateHeight = (int)Math.Round(templateGray.Height * scale);
+                var clickX = offsetX + maxLocation.X - scaledCropX + scaledTemplateWidth / 2;
+                var clickY = offsetY + maxLocation.Y - scaledCropY + scaledTemplateHeight / 2;
+
+                if (verifiedScore > bestScore)
+                {
+                    bestScore = verifiedScore;
+                    bestX = clickX;
+                    bestY = clickY;
+                }
+
+                if (verifiedScore >= partialThreshold)
+                    return (true, clickX, clickY, verifiedScore);
+            }
+        }
+
+        return (false, bestX, bestY, bestScore);
+    }
+
+    private static bool ShouldTryPartialTemplates(Mat templateGray)
+    {
+        var area = templateGray.Width * templateGray.Height;
+        return templateGray.Width >= 48 &&
+               templateGray.Height >= 28 &&
+               area <= 36000;
+    }
+
+    private static double GetPartialTemplateThreshold(double threshold, int templateWidth, int templateHeight)
+    {
+        var area = templateWidth * templateHeight;
+        if (area <= 6000 || templateHeight <= 48)
+            return Math.Max(0.86, threshold - 0.04);
+
+        return Math.Max(0.88, threshold - 0.03);
+    }
+
+    private static IEnumerable<OpenCvSharp.Rect> BuildPartialTemplateCrops(int width, int height)
+    {
+        var minWidth = Math.Max(24, width / 3);
+        var minHeight = Math.Max(16, height / 3);
+
+        var rightX = Math.Max(8, width / 4);
+        if (width - rightX >= minWidth)
+            yield return new OpenCvSharp.Rect(rightX, 0, width - rightX, height);
+
+        var leftWidth = width - Math.Max(8, width / 4);
+        if (leftWidth >= minWidth)
+            yield return new OpenCvSharp.Rect(0, 0, leftWidth, height);
+
+        var centerX = width / 8;
+        var centerY = height / 8;
+        var centerWidth = width - centerX * 2;
+        var centerHeight = height - centerY * 2;
+        if (centerWidth >= minWidth && centerHeight >= minHeight)
+            yield return new OpenCvSharp.Rect(centerX, centerY, centerWidth, centerHeight);
+
+        var bottomY = height / 2;
+        if (height - bottomY >= minHeight)
+            yield return new OpenCvSharp.Rect(0, bottomY, width, height - bottomY);
+    }
+
+    private static (bool Found, int X, int Y, double Score) FindWithEdges(
+        Mat screenGray,
+        Mat templateGray,
+        double threshold,
+        int offsetX,
+        int offsetY,
+        double[] templateScales)
+    {
+        var edgeThreshold = GetEdgeThreshold(threshold, templateGray.Width, templateGray.Height);
+        var contentThreshold = GetEdgeContentThreshold(threshold, templateGray.Width, templateGray.Height);
+        using var screenEdges = BuildEdges(screenGray);
+        var bestScore = 0d;
+        var bestX = 0;
+        var bestY = 0;
+
+        foreach (var scale in templateScales)
+        {
+            var width = Math.Max(1, (int)Math.Round(templateGray.Width * scale));
+            var height = Math.Max(1, (int)Math.Round(templateGray.Height * scale));
+            if (width > screenGray.Width || height > screenGray.Height)
+                continue;
+
+            using var candidateGray = ResizeTemplate(templateGray, width, height, scale);
+            using var candidateEdges = BuildEdges(candidateGray);
+            if (!HasEnoughEdges(candidateEdges))
+                continue;
+
+            using var result = new Mat();
+            Cv2.MatchTemplate(screenEdges, candidateEdges, result, TemplateMatchModes.CCoeffNormed);
+            Cv2.MinMaxLoc(result, out _, out var maxValue, out _, out var maxLocation);
+
+            if (double.IsNaN(maxValue) || double.IsInfinity(maxValue))
+                maxValue = 0;
+
+            var contentScore = VerifyGrayContentScore(screenGray, candidateGray, maxLocation, maxValue);
+            var verifiedScore = Math.Min(maxValue, contentScore);
+
+            if (verifiedScore > bestScore)
+            {
+                bestScore = verifiedScore;
+                bestX = offsetX + maxLocation.X + candidateEdges.Width / 2;
+                bestY = offsetY + maxLocation.Y + candidateEdges.Height / 2;
+            }
+
+            if (maxValue >= edgeThreshold && contentScore >= contentThreshold)
+                return (true, bestX, bestY, verifiedScore);
+        }
+
+        return (false, bestX, bestY, bestScore);
+    }
+
+    private static Mat ResizeTemplate(Mat templateGray, int width, int height, double scale)
+    {
+        if (Math.Abs(scale - 1.0) <= 0.001)
+            return templateGray.Clone();
+
+        var resized = new Mat();
+        Cv2.Resize(
+            templateGray,
+            resized,
+            new OpenCvSharp.Size(width, height),
+            0,
+            0,
+            scale < 1.0 ? InterpolationFlags.Area : InterpolationFlags.Linear);
+        return resized;
+    }
+
+    private static Mat BuildEdges(Mat gray)
+    {
+        using var blurred = new Mat();
+        Cv2.GaussianBlur(gray, blurred, new OpenCvSharp.Size(3, 3), 0);
+
+        var edges = new Mat();
+        Cv2.Canny(blurred, edges, 45, 135);
+
+        using var kernel = Cv2.GetStructuringElement(MorphShapes.Rect, new OpenCvSharp.Size(2, 2));
+        Cv2.Dilate(edges, edges, kernel);
+        return edges;
+    }
+
+    private static bool HasEnoughEdges(Mat edges)
+    {
+        var edgePixels = Cv2.CountNonZero(edges);
+        var minEdges = Math.Max(10, (int)Math.Round(edges.Width * edges.Height * 0.008));
+        return edgePixels >= minEdges;
+    }
+
+    private static double GetEdgeThreshold(double threshold, int templateWidth, int templateHeight)
+    {
+        var area = templateWidth * templateHeight;
+        if (area <= 2500 || templateHeight <= 32)
+            return Math.Max(0.86, threshold - 0.02);
+
+        if (area <= 6000 || templateHeight <= 48)
+            return Math.Max(0.88, threshold - 0.02);
+
+        return Math.Max(0.90, threshold - 0.02);
+    }
+
+    private static double GetEdgeContentThreshold(double threshold, int templateWidth, int templateHeight)
+    {
+        var area = templateWidth * templateHeight;
+        if (area <= 2500 || templateHeight <= 32)
+            return Math.Max(0.86, threshold - 0.03);
+
+        if (area <= 6000 || templateHeight <= 48)
+            return Math.Max(0.88, threshold - 0.03);
+
+        return Math.Max(0.89, threshold - 0.03);
+    }
+
     private static double GetEarlyReturnThreshold(double threshold)
     {
         if (threshold >= 0.9)
             return threshold;
 
         return Math.Min(0.92, Math.Max(threshold, threshold + 0.08));
+    }
+
+    private static double VerifyGrayContentScore(
+        Mat screenGray,
+        Mat candidateGray,
+        OpenCvSharp.Point location,
+        double correlationScore)
+    {
+        if (location.X < 0 ||
+            location.Y < 0 ||
+            location.X + candidateGray.Width > screenGray.Width ||
+            location.Y + candidateGray.Height > screenGray.Height)
+        {
+            return 0;
+        }
+
+        using var patch = new Mat(
+            screenGray,
+            new OpenCvSharp.Rect(location.X, location.Y, candidateGray.Width, candidateGray.Height));
+        using var diff = new Mat();
+        Cv2.Absdiff(patch, candidateGray, diff);
+        var meanDiff = Cv2.Mean(diff).Val0;
+        var differenceScore = Math.Clamp(1.0 - meanDiff / 255.0, 0.0, 1.0);
+
+        if (double.IsNaN(correlationScore) || double.IsInfinity(correlationScore))
+            return differenceScore;
+
+        return Math.Min(Math.Clamp(correlationScore, 0.0, 1.0), differenceScore);
+    }
+
+    private void WarnOpenCvFallback(string message)
+    {
+        if (_openCvFallbackLogged)
+            return;
+
+        _openCvFallbackLogged = true;
+        _logger.Warn("Image", message);
     }
 
     private static bool IsLowVarianceTemplate(Mat templateGray)

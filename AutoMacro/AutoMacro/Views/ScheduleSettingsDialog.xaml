@@ -1,0 +1,197 @@
+<ui:FluentWindow
+    x:Class="AutoMacro.Views.ScheduleSettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+    Title="定时执行"
+    Width="940"
+    Height="560"
+    MinWidth="860"
+    MinHeight="480"
+    WindowStartupLocation="CenterOwner"
+    ExtendsContentIntoTitleBar="True"
+    Icon="/Assets/icon.ico">
+
+    <Grid Margin="20,40,20,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Text="定时执行脚本"
+                   FontSize="16"
+                   FontWeight="SemiBold"
+                   Foreground="White"
+                   Margin="0,0,0,8" />
+
+        <TextBlock Grid.Row="1"
+                   Text="先选择触发器，再设置参数。软件保持运行时，到点会自动播放对应方案；录制或播放中到点会跳过本次执行。"
+                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,0,0,14" />
+
+        <DataGrid x:Name="TasksGrid"
+                  Grid.Row="2"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  ItemsSource="{Binding Tasks}">
+            <DataGrid.Columns>
+                <DataGridCheckBoxColumn Header="启用"
+                                        Width="56"
+                                        Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+
+                <DataGridTemplateColumn Header="方案" Width="160">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding DataContext.ProfileNames, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                      SelectedItem="{Binding ProfileName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      MinWidth="130" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="触发器" Width="140">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ComboBox ItemsSource="{Binding DataContext.ModeOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                      DisplayMemberPath="Label"
+                                      SelectedValuePath="Value"
+                                      SelectedValue="{Binding RepeatMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      MinWidth="116" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="参数" Width="260">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <StackPanel Grid.Row="0"
+                                            Orientation="Horizontal"
+                                            Visibility="{Binding IsIntervalHours, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="每隔"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="0,0,6,0" />
+                                    <TextBox Text="{Binding IntervalHours, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="56" />
+                                    <TextBlock Text="小时"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="6,0,0,0" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0"
+                                            Orientation="Horizontal"
+                                            Visibility="{Binding IsIntervalSeconds, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="每隔"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="0,0,6,0" />
+                                    <TextBox Text="{Binding IntervalSeconds, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="56" />
+                                    <TextBlock Text="秒"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="6,0,0,0" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0"
+                                            Orientation="Horizontal"
+                                            Visibility="{Binding IsDaily, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="每天"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="0,0,6,0" />
+                                    <TextBox Text="{Binding TimeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="72" />
+                                    <TextBlock Text="执行"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="6,0,0,0" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Row="0"
+                                            Orientation="Horizontal"
+                                            Visibility="{Binding IsOnce, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <DatePicker SelectedDate="{Binding RunDate, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                MinWidth="128" />
+                                    <TextBox Text="{Binding TimeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="72"
+                                             Margin="8,0,0,0" />
+                                </StackPanel>
+
+                                <TextBlock Grid.Row="1"
+                                           Text="{Binding TriggerHint}"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           FontSize="11"
+                                           TextTrimming="CharacterEllipsis"
+                                           Margin="0,4,0,0" />
+                            </Grid>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTextColumn Header="下次执行"
+                                    Width="150"
+                                    Binding="{Binding NextRunText}"
+                                    IsReadOnly="True" />
+
+                <DataGridTextColumn Header="上次执行"
+                                    Width="130"
+                                    Binding="{Binding LastRunText}"
+                                    IsReadOnly="True" />
+
+                <DataGridTemplateColumn Header="操作" Width="80">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ui:Button Content="删除"
+                                       Appearance="Danger"
+                                       Padding="8,4"
+                                       Tag="{Binding}"
+                                       Click="DeleteTask_Click" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <Grid Grid.Row="3" Margin="0,16,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Orientation="Horizontal">
+                <ui:Button Content="新增任务"
+                           Appearance="Primary"
+                           MinWidth="96"
+                           Click="AddTask_Click" />
+            </StackPanel>
+
+            <StackPanel Grid.Column="1"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right">
+                <ui:Button Content="取消"
+                           MinWidth="80"
+                           Margin="0,0,8,0"
+                           Click="Cancel_Click" />
+                <ui:Button Content="保存"
+                           MinWidth="80"
+                           Appearance="Primary"
+                           Click="Save_Click" />
+            </StackPanel>
+        </Grid>
+    </Grid>
+</ui:FluentWindow>

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using AutoMacro.Models;
 using SharpHook;
@@ -28,6 +29,7 @@ public class PlaybackService : IPlaybackService
     public event EventHandler? PlaybackStopped;
     public event EventHandler? LoopChanged;
     public event EventHandler<PlaybackStepChangedEventArgs>? StepChanged;
+    public event EventHandler<PlaybackDelayChangedEventArgs>? DelayChanged;
 
     public PlaybackService(
         IClipboardInjector clipboardInjector,
@@ -45,9 +47,17 @@ public class PlaybackService : IPlaybackService
         _apiClientService = apiClientService;
     }
 
-    public async Task StartPlaybackAsync(IList<InputEvent> events, VariableTable variableTable, int loopCount, double playbackSpeed)
+    public async Task StartPlaybackAsync(
+        IList<InputEvent> events,
+        VariableTable variableTable,
+        int loopCount,
+        double playbackSpeed,
+        int startStepNumber = 1)
     {
         if (IsPlaying) return;
+
+        var startStep = NormalizeStartStepNumber(startStepNumber, events.Count);
+        var playbackEvents = events.Skip(startStep - 1).ToList();
 
         _cts = new CancellationTokenSource();
         _pauseTcs = null;
@@ -64,7 +74,7 @@ public class PlaybackService : IPlaybackService
         {
             var totalLoops = loopCount == 0 ? int.MaxValue : loopCount;
 
-            var filtered = PreparePlaybackEvents(events);
+            var filtered = PreparePlaybackEvents(playbackEvents);
 
             for (int loop = 0; loop < totalLoops; loop++)
             {
@@ -79,10 +89,13 @@ public class PlaybackService : IPlaybackService
                     if (IsPaused && _pauseTcs is not null)
                         await _pauseTcs.Task; // 异步等待，不阻塞 UI
 
-                    StepChanged?.Invoke(this, new PlaybackStepChangedEventArgs(evt, stepIndex + 1, filtered.Count, CurrentLoop));
+                    StepChanged?.Invoke(this, new PlaybackStepChangedEventArgs(evt, startStep + stepIndex, events.Count, CurrentLoop));
 
                     if (evt.EventType != InputEventType.Delay && evt.DeltaMs > 0)
-                        await DelayAsync(evt.DeltaMs, _cts.Token);
+                    {
+                        _logger.Info("Playback", $"动作前延迟: step={stepIndex + 1}, type={evt.EventType}, delay={evt.DeltaMs}ms");
+                        await DelayAsync(evt.DeltaMs, _cts.Token, "动作延迟");
+                    }
 
                     await ExecuteEvent(evt, variableTable, _cts.Token);
                 }
@@ -208,7 +221,7 @@ public class PlaybackService : IPlaybackService
                 }
 
             case InputEventType.Delay:
-                await DelayAsync(evt.DeltaMs, cancellationToken);
+                await DelayAsync(evt.DeltaMs, cancellationToken, "等待");
                 break;
 
             case InputEventType.ActivateWindow:
@@ -223,11 +236,7 @@ public class PlaybackService : IPlaybackService
 
             case InputEventType.WaitImage:
                 {
-                    var found = await _imageRecognitionService.FindImageAsync(
-                        evt.ImagePath ?? string.Empty,
-                        evt.MatchThreshold,
-                        evt.TimeoutMs,
-                        cancellationToken);
+                    var found = await FindImageForPlaybackAsync(evt, "等待图片", cancellationToken);
                     if (!found.Found)
                     {
                         SkipMissingImage(evt, "等待图片");
@@ -237,11 +246,7 @@ public class PlaybackService : IPlaybackService
 
             case InputEventType.ImageClick:
                 {
-                    var found = await _imageRecognitionService.FindImageAsync(
-                        evt.ImagePath ?? string.Empty,
-                        evt.MatchThreshold,
-                        evt.TimeoutMs,
-                        cancellationToken);
+                    var found = await FindImageForPlaybackAsync(evt, "ImageClick", cancellationToken);
                     if (!found.Found)
                     {
                         SkipMissingImage(evt, "图片点击");
@@ -249,7 +254,10 @@ public class PlaybackService : IPlaybackService
                     }
 
                     if (evt.AfterFoundDelayMs > 0)
-                        await Task.Delay(evt.AfterFoundDelayMs, cancellationToken);
+                    {
+                        _logger.Info("Playback", $"图片点击延迟: {Path.GetFileName(evt.ImagePath)}, delay={evt.AfterFoundDelayMs}ms");
+                        await DelayAsync(evt.AfterFoundDelayMs, cancellationToken, "点击延迟", applyPlaybackSpeed: false);
+                    }
 
                     _simulator.SimulateMouseMovement((short)found.X, (short)found.Y);
                     await Task.Delay(20, cancellationToken);
@@ -262,11 +270,7 @@ public class PlaybackService : IPlaybackService
 
             case InputEventType.ImageMove:
                 {
-                    var found = await _imageRecognitionService.FindImageAsync(
-                        evt.ImagePath ?? string.Empty,
-                        evt.MatchThreshold,
-                        evt.TimeoutMs,
-                        cancellationToken);
+                    var found = await FindImageForPlaybackAsync(evt, "ImageMove", cancellationToken);
                     if (!found.Found)
                     {
                         SkipMissingImage(evt, "图片移动");
@@ -274,7 +278,10 @@ public class PlaybackService : IPlaybackService
                     }
 
                     if (evt.AfterFoundDelayMs > 0)
-                        await Task.Delay(evt.AfterFoundDelayMs, cancellationToken);
+                    {
+                        _logger.Info("Playback", $"图片移动延迟: {Path.GetFileName(evt.ImagePath)}, delay={evt.AfterFoundDelayMs}ms");
+                        await DelayAsync(evt.AfterFoundDelayMs, cancellationToken, "移动延迟", applyPlaybackSpeed: false);
+                    }
 
                     _simulator.SimulateMouseMovement((short)found.X, (short)found.Y);
                     _logger.Info("Playback", $"图片移动完成: {Path.GetFileName(evt.ImagePath)}, x={found.X}, y={found.Y}, score={found.Score:0.000}");
@@ -428,8 +435,10 @@ public class PlaybackService : IPlaybackService
         }
 
         var timeoutMs = Math.Max(1000, segment.TimeoutMs <= 0 ? 10000 : segment.TimeoutMs);
+        _logger.Info("Playback", $"鼠标键盘录制片段开始: timeout={timeoutMs}ms, actions={segment.RecordedEventCount}");
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(timeoutMs);
+        var completedEvents = 0;
 
         try
         {
@@ -443,17 +452,17 @@ public class PlaybackService : IPlaybackService
 
                 var child = childEvents[i];
                 if (child.EventType != InputEventType.Delay && child.DeltaMs > 0)
-                    await DelayAsync(child.DeltaMs, timeoutCts.Token);
+                    await DelayAsync(child.DeltaMs, timeoutCts.Token, showCountdown: false);
 
                 await ExecuteEvent(child, variableTable, timeoutCts.Token);
+                completedEvents++;
             }
 
             _logger.Info("Playback", $"鼠标键盘录制片段完成: actions={childEvents.Count}");
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            _logger.Error("Playback", $"鼠标键盘录制片段超时: timeout={timeoutMs}ms, actions={segment.RecordedEventCount}");
-            _cts?.Cancel();
+            _logger.Warn("Playback", $"鼠标键盘录制片段超时，已跳过剩余录制动作: timeout={timeoutMs}ms, completed={completedEvents}, actions={segment.RecordedEventCount}");
         }
     }
 
@@ -482,15 +491,80 @@ public class PlaybackService : IPlaybackService
         return Math.Clamp(playbackSpeed, 0.1, 10.0);
     }
 
-    private Task DelayAsync(long deltaMs, CancellationToken cancellationToken)
+    private static int NormalizeStartStepNumber(int startStepNumber, int eventCount)
     {
-        if (deltaMs <= 0) return Task.CompletedTask;
+        if (eventCount <= 0)
+            return 1;
 
-        var scaled = deltaMs / _playbackSpeed;
+        return Math.Clamp(startStepNumber, 1, eventCount);
+    }
+
+    private async Task DelayAsync(
+        long deltaMs,
+        CancellationToken cancellationToken,
+        string label = "延迟",
+        bool showCountdown = true,
+        bool applyPlaybackSpeed = true)
+    {
+        if (deltaMs <= 0) return;
+
+        var scaled = applyPlaybackSpeed ? deltaMs / _playbackSpeed : deltaMs;
         var delayMs = (int)Math.Clamp(Math.Round(scaled), 0, int.MaxValue);
-        return delayMs == 0
-            ? Task.CompletedTask
-            : Task.Delay(delayMs, cancellationToken);
+        if (delayMs == 0)
+            return;
+
+        if (!showCountdown || delayMs < 250)
+        {
+            await Task.Delay(delayMs, cancellationToken);
+            return;
+        }
+
+        await DelayWithCountdownAsync(delayMs, label, cancellationToken);
+    }
+
+    private async Task DelayWithCountdownAsync(int delayMs, string label, CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            RaiseDelayChanged(true, label, delayMs, delayMs);
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var remainingMs = Math.Max(0, delayMs - (int)stopwatch.ElapsedMilliseconds);
+                if (remainingMs <= 0)
+                    break;
+
+                await Task.Delay(Math.Min(100, remainingMs), cancellationToken);
+                remainingMs = Math.Max(0, delayMs - (int)stopwatch.ElapsedMilliseconds);
+                RaiseDelayChanged(true, label, remainingMs, delayMs);
+            }
+        }
+        finally
+        {
+            RaiseDelayChanged(false, string.Empty, 0, delayMs);
+        }
+    }
+
+    private void RaiseDelayChanged(bool isActive, string label, int remainingMs, int totalMs)
+    {
+        DelayChanged?.Invoke(this, new PlaybackDelayChangedEventArgs(isActive, label, remainingMs, totalMs));
+    }
+
+    private async Task<(bool Found, int X, int Y, double Score)> FindImageForPlaybackAsync(
+        InputEvent evt,
+        string actionName,
+        CancellationToken cancellationToken)
+    {
+        var imageName = Path.GetFileName(evt.ImagePath);
+        _logger.Info("Playback", $"{actionName}开始: {imageName}, timeout={evt.TimeoutMs}ms, delay={evt.AfterFoundDelayMs}ms");
+
+        return await _imageRecognitionService.FindImageAsync(
+            evt.ImagePath ?? string.Empty,
+            evt.MatchThreshold,
+            evt.TimeoutMs,
+            cancellationToken);
     }
 
     private static List<InputEvent> PreparePlaybackEvents(

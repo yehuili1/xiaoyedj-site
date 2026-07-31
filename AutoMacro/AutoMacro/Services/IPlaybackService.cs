@@ -11,11 +11,28 @@ public interface IPlaybackService
     event EventHandler? PlaybackStopped;
     event EventHandler? LoopChanged;
     event EventHandler<PlaybackStepChangedEventArgs>? StepChanged;
-    Task StartPlaybackAsync(IList<InputEvent> events, VariableTable variableTable, int loopCount, double playbackSpeed);
+    event EventHandler<PlaybackDelayChangedEventArgs>? DelayChanged;
+    Task StartPlaybackAsync(IList<InputEvent> events, VariableTable variableTable, int loopCount, double playbackSpeed, int startStepNumber = 1);
     void SetPlaybackSpeed(double playbackSpeed);
     void PausePlayback();
     void ResumePlayback();
     void StopPlayback();
+}
+
+public sealed class PlaybackDelayChangedEventArgs : EventArgs
+{
+    public PlaybackDelayChangedEventArgs(bool isActive, string label, int remainingMs, int totalMs)
+    {
+        IsActive = isActive;
+        Label = label;
+        RemainingMs = remainingMs;
+        TotalMs = totalMs;
+    }
+
+    public bool IsActive { get; }
+    public string Label { get; }
+    public int RemainingMs { get; }
+    public int TotalMs { get; }
 }
 
 public sealed class PlaybackStepChangedEventArgs : EventArgs

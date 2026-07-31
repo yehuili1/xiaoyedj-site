@@ -281,7 +281,8 @@ public class RecordingService : IRecordingService
 
     private InputEvent AddWindowContext(InputEvent evt)
     {
-        var window = _windowAutomationService.GetForegroundWindowSnapshot();
+        var window = _windowAutomationService.GetWindowSnapshotAtPoint(evt.X, evt.Y)
+                     ?? _windowAutomationService.GetForegroundWindowSnapshot();
         if (window is null)
             return evt;
 

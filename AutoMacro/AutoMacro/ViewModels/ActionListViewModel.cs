@@ -32,6 +32,7 @@ public partial class ActionListViewModel : ObservableObject
 
     public bool IsRecordingSegment { get; private set; }
     public bool IsInsertRecordingDialogOpen => _segmentRecordingDialog is not null;
+    public event EventHandler<int>? StartPlaybackFromStepRequested;
 
     public ActionListViewModel(
         IProfileManager profileManager,
@@ -152,7 +153,10 @@ public partial class ActionListViewModel : ObservableObject
         var delaySeconds = PromptNumber("插入录制", "延迟执行时间：等多少秒后开始执行这段录制？", 1);
         if (delaySeconds is null) return;
 
-        var timeoutSeconds = PromptNumber("插入录制", "超时时间：最长允许这段录制执行多少秒？", 10);
+        var timeoutSeconds = PromptNumber(
+            "插入录制",
+            "超时时间：最长允许这段录制执行多少秒？",
+            GetSuggestedRecordedSegmentTimeoutSeconds(recorded));
         if (timeoutSeconds is null) return;
 
         var segment = new InputEvent
@@ -1006,6 +1010,17 @@ public partial class ActionListViewModel : ObservableObject
         SelectedIndex = newIndex;
     }
 
+    public void StartPlaybackFromAction(InputEvent action)
+    {
+        var index = Actions.IndexOf(action);
+        if (index < 0)
+            return;
+
+        SelectedAction = action;
+        SelectedIndex = index;
+        StartPlaybackFromStepRequested?.Invoke(this, index + 1);
+    }
+
     [RelayCommand]
     private void ClearAll()
     {
@@ -1196,6 +1211,13 @@ public partial class ActionListViewModel : ObservableObject
             normalized[0].DeltaMs = 0;
 
         return normalized;
+    }
+
+    private static double GetSuggestedRecordedSegmentTimeoutSeconds(IReadOnlyCollection<InputEvent> recorded)
+    {
+        var recordedDurationSeconds = Math.Ceiling(recorded.Sum(evt => Math.Max(0, evt.DeltaMs)) / 1000.0) + 3;
+        var actionCountSeconds = Math.Ceiling(recorded.Count * 0.15) + 3;
+        return Math.Clamp(Math.Max(10, Math.Max(recordedDurationSeconds, actionCountSeconds)), 1, 600);
     }
 
     private static void AddRepairedDrag(

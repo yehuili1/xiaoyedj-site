@@ -44,6 +44,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
                     <!-- Profile Selector -->
@@ -133,8 +134,27 @@
                                    Margin="6,0,0,0" />
                     </Grid>
 
-                    <!-- Import / Export -->
+                    <!-- Playback Start Step (per profile) -->
                     <Grid Grid.Row="3" Margin="0,4,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0"
+                                   Text="从第几步:"
+                                   VerticalAlignment="Center"
+                                   FontSize="13"
+                                   Margin="2,0,8,0" />
+                        <ui:NumberBox Grid.Column="1"
+                                      Value="{Binding PlaybackStartStep, Mode=TwoWay}"
+                                      Minimum="1"
+                                      Maximum="9999"
+                                      SpinButtonPlacementMode="Hidden"
+                                      ToolTip="播放时从这个序号对应的步骤开始执行" />
+                    </Grid>
+
+                    <!-- Import / Export -->
+                    <Grid Grid.Row="4" Margin="0,4,0,8">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
@@ -153,9 +173,13 @@
                                    Margin="2,0,0,0" />
                     </Grid>
 
-                    <Grid Grid.Row="4" Margin="0,0,0,8">
+                    <Grid Grid.Row="5" Margin="0,0,0,8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
@@ -166,17 +190,31 @@
                                    HorizontalAlignment="Stretch"
                                    Margin="0,0,2,0" />
                         <ui:Button Grid.Column="1"
+                                   Content="定时"
+                                   Command="{Binding OpenScheduleSettingsCommand}"
+                                   HorizontalAlignment="Stretch"
+                                   Margin="2,0,2,0" />
+                        <ui:Button Grid.Row="1"
+                                   Grid.Column="0"
                                    Icon="{ui:SymbolIcon Options24}"
                                    Content="设置"
                                    Click="AppSettings_Click"
                                    HorizontalAlignment="Stretch"
-                                   Margin="2,0,2,0" />
-                        <ui:Button Grid.Column="2"
+                                   Margin="0,6,2,0" />
+                        <ui:Button Grid.Row="1"
+                                   Grid.Column="1"
                                    Icon="{ui:SymbolIcon DocumentBulletList24}"
                                    Content="日志"
                                    Command="{Binding OpenLogFolderCommand}"
                                    HorizontalAlignment="Stretch"
-                                   Margin="2,0,0,0" />
+                                   Margin="2,6,0,0" />
+                        <TextBlock Grid.Row="2"
+                                   Grid.ColumnSpan="2"
+                                   Text="{Binding ScheduleSummaryText}"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                   FontSize="11"
+                                   TextTrimming="CharacterEllipsis"
+                                   Margin="2,8,0,0" />
                     </Grid>
 
                 </Grid>

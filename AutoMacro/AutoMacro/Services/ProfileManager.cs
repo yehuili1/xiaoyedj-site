@@ -10,12 +10,14 @@ public class ProfileManager : IProfileManager
 {
     private const string ProfilesFolderName = "Profiles";
     private const string HotkeySettingsFileName = "hotkey_settings.json";
+    private const string ScheduleSettingsFileName = "schedule_settings.json";
     private const string GlobalConfigManifestFileName = "global_config.json";
 
     private sealed class ProfileMetadata
     {
         public int LoopCount { get; set; } = 1;
         public double PlaybackSpeed { get; set; } = 1.0;
+        public int PlaybackStartStep { get; set; } = 1;
     }
 
     private sealed class GlobalConfigManifest
@@ -108,7 +110,8 @@ public class ProfileManager : IProfileManager
             FolderPath = newFolderPath,
             CreatedAt = profile.CreatedAt,
             LoopCount = profile.LoopCount,
-            PlaybackSpeed = profile.PlaybackSpeed
+            PlaybackSpeed = profile.PlaybackSpeed,
+            PlaybackStartStep = 1
         };
 
         SaveProfile(renamed);
@@ -126,7 +129,8 @@ public class ProfileManager : IProfileManager
         var metadata = new ProfileMetadata
         {
             LoopCount = Math.Max(0, profile.LoopCount),
-            PlaybackSpeed = NormalizePlaybackSpeed(profile.PlaybackSpeed)
+            PlaybackSpeed = NormalizePlaybackSpeed(profile.PlaybackSpeed),
+            PlaybackStartStep = 1
         };
 
         var json = JsonSerializer.Serialize(metadata, JsonOptions);
@@ -233,6 +237,8 @@ public class ProfileManager : IProfileManager
 
         if (!File.Exists(HotkeySettings.SettingsFilePath))
             new HotkeySettings().Save();
+        if (!File.Exists(ScheduledTaskSettings.SettingsFilePath))
+            new ScheduledTaskSettings().Save();
 
         var tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         try
@@ -258,6 +264,11 @@ public class ProfileManager : IProfileManager
                 Path.Combine(tempDir, HotkeySettingsFileName),
                 overwrite: true);
 
+            File.Copy(
+                ScheduledTaskSettings.SettingsFilePath,
+                Path.Combine(tempDir, ScheduleSettingsFileName),
+                overwrite: true);
+
             ZipFile.CreateFromDirectory(tempDir, zipPath, CompressionLevel.Optimal, includeBaseDirectory: false);
         }
         finally
@@ -275,18 +286,22 @@ public class ProfileManager : IProfileManager
             var root = FindGlobalConfigRoot(tempDir);
             var sourceProfilesRoot = Path.Combine(root, ProfilesFolderName);
             var sourceHotkeySettings = Path.Combine(root, HotkeySettingsFileName);
+            var sourceScheduleSettings = Path.Combine(root, ScheduleSettingsFileName);
 
             if (!Directory.Exists(sourceProfilesRoot))
                 throw new InvalidOperationException("这个压缩包里没有找到 Profiles 文件夹，不是完整的全局配置包。");
 
             var backupProfilesRoot = Path.Combine(tempDir, "current_Profiles_backup");
             var backupHotkeySettings = Path.Combine(tempDir, "current_hotkey_settings_backup.json");
+            var backupScheduleSettings = Path.Combine(tempDir, "current_schedule_settings_backup.json");
 
             if (Directory.Exists(_profilesRoot))
                 Directory.Move(_profilesRoot, backupProfilesRoot);
 
             if (File.Exists(HotkeySettings.SettingsFilePath))
                 File.Copy(HotkeySettings.SettingsFilePath, backupHotkeySettings, overwrite: true);
+            if (File.Exists(ScheduledTaskSettings.SettingsFilePath))
+                File.Copy(ScheduledTaskSettings.SettingsFilePath, backupScheduleSettings, overwrite: true);
 
             try
             {
@@ -299,6 +314,18 @@ public class ProfileManager : IProfileManager
                         HotkeySettings.SettingsFilePath,
                         overwrite: true);
                 }
+
+                if (File.Exists(sourceScheduleSettings))
+                {
+                    File.Copy(
+                        sourceScheduleSettings,
+                        ScheduledTaskSettings.SettingsFilePath,
+                        overwrite: true);
+                }
+                else
+                {
+                    new ScheduledTaskSettings().Save();
+                }
             }
             catch
             {
@@ -310,6 +337,8 @@ public class ProfileManager : IProfileManager
 
                 if (File.Exists(backupHotkeySettings))
                     File.Copy(backupHotkeySettings, HotkeySettings.SettingsFilePath, overwrite: true);
+                if (File.Exists(backupScheduleSettings))
+                    File.Copy(backupScheduleSettings, ScheduledTaskSettings.SettingsFilePath, overwrite: true);
 
                 throw;
             }
@@ -326,6 +355,7 @@ public class ProfileManager : IProfileManager
     {
         profile.LoopCount = 1;
         profile.PlaybackSpeed = 1.0;
+        profile.PlaybackStartStep = 1;
 
         if (!File.Exists(profile.ProfileFilePath))
             return;
@@ -336,11 +366,13 @@ public class ProfileManager : IProfileManager
             var metadata = JsonSerializer.Deserialize<ProfileMetadata>(json, JsonOptions);
             profile.LoopCount = Math.Max(0, metadata?.LoopCount ?? 1);
             profile.PlaybackSpeed = NormalizePlaybackSpeed(metadata?.PlaybackSpeed ?? 1.0);
+            profile.PlaybackStartStep = 1;
         }
         catch
         {
             profile.LoopCount = 1;
             profile.PlaybackSpeed = 1.0;
+            profile.PlaybackStartStep = 1;
         }
     }
 
@@ -450,6 +482,7 @@ public class ProfileManager : IProfileManager
     {
         return Directory.Exists(Path.Combine(dir, ProfilesFolderName)) ||
                File.Exists(Path.Combine(dir, HotkeySettingsFileName)) ||
+               File.Exists(Path.Combine(dir, ScheduleSettingsFileName)) ||
                File.Exists(Path.Combine(dir, GlobalConfigManifestFileName));
     }
 

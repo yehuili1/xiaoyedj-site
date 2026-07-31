@@ -32,6 +32,10 @@ public partial class ActionListView : UserControl
         if (e.Row.ContextMenu is null)
         {
             var menu = new ContextMenu();
+            var startItem = new MenuItem { Header = "从此步开始执行" };
+            startItem.Click += StartFromStepMenuItem_Click;
+            menu.Items.Add(startItem);
+            menu.Items.Add(new Separator());
             var editItem = new MenuItem { Header = "\u4fee\u6539\u8fd9\u4e00\u6b65" };
             editItem.Click += EditStepMenuItem_Click;
             menu.Items.Add(editItem);
@@ -136,6 +140,15 @@ public partial class ActionListView : UserControl
 
         if (DataContext is ActionListViewModel viewModel)
             viewModel.EditAction(action);
+    }
+
+    private void StartFromStepMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (ActionDataGrid.SelectedItem is not InputEvent action)
+            return;
+
+        if (DataContext is ActionListViewModel viewModel)
+            viewModel.StartPlaybackFromAction(action);
     }
 
     private void PreviewImage_Click(object sender, RoutedEventArgs e)

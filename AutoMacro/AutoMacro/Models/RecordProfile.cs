@@ -12,6 +12,7 @@ public class RecordProfile
     public DateTime CreatedAt { get; set; } = DateTime.Now;
     public int LoopCount { get; set; } = 1;
     public double PlaybackSpeed { get; set; } = 1.0;
+    public int PlaybackStartStep { get; set; } = 1;
 
     public override string ToString() => Name;
 }

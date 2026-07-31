@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Threading;
 using Application = System.Windows.Application;
 using AutoMacro.Models;
 using AutoMacro.Services;
@@ -21,6 +22,9 @@ public partial class MainViewModel : ObservableObject
     private readonly IPlaybackService _playbackService;
     private readonly IHotkeyService _hotkeyService;
     private readonly IRunLogger _logger;
+    private ScheduledTaskSettings _scheduleSettings;
+    private readonly DispatcherTimer _scheduleTimer;
+    private bool _scheduleTickRunning;
 
     public ActionListViewModel ActionListVm { get; }
     public VariableEditorViewModel VariableEditorVm { get; }
@@ -50,6 +54,15 @@ public partial class MainViewModel : ObservableObject
     private string _currentStepBadgeText = "待命";
 
     [ObservableProperty]
+    private string _currentDelayLabel = "状态";
+
+    [ObservableProperty]
+    private string _currentDelayText = "待命";
+
+    [ObservableProperty]
+    private string _scheduleSummaryText = "定时: 未设置";
+
+    [ObservableProperty]
     private bool _isRecording;
 
     [ObservableProperty]
@@ -63,6 +76,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private double _playbackSpeed = 1.0;
+
+    [ObservableProperty]
+    private int _playbackStartStep = 1;
 
     // 快捷键显示文本
     [ObservableProperty]
@@ -81,6 +97,7 @@ public partial class MainViewModel : ObservableObject
     public string PauseButtonText => IsPaused ? "继续" : "暂停";
     public string PlaybackButtonText => IsPlaying ? "停止播放" : "开始播放";
     public bool ShowPauseButton => IsRecording || IsPlaying;
+    public event EventHandler? MiniModeRequested;
 
     public MainViewModel(
         IProfileManager profileManager,
@@ -98,6 +115,14 @@ public partial class MainViewModel : ObservableObject
         _logger = logger;
         ActionListVm = actionListVm;
         VariableEditorVm = variableEditorVm;
+        ActionListVm.StartPlaybackFromStepRequested += (_, stepNumber) =>
+            Application.Current.Dispatcher.BeginInvoke(() => HandleStartPlaybackFromStep(stepNumber));
+        _scheduleSettings = ScheduledTaskSettings.Load();
+        _scheduleTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _scheduleTimer.Tick += OnScheduleTimerTick;
 
         _profileManager.LoadAllProfiles();
         Profiles = _profileManager.Profiles;
@@ -105,6 +130,7 @@ public partial class MainViewModel : ObservableObject
         _recordingService.EventRecorded += OnEventRecorded;
         _playbackService.PlaybackStopped += OnPlaybackStopped;
         _playbackService.StepChanged += OnPlaybackStepChanged;
+        _playbackService.DelayChanged += OnPlaybackDelayChanged;
         _playbackService.LoopChanged += (_, _) =>
             Application.Current.Dispatcher.BeginInvoke(UpdateStatus);
 
@@ -122,8 +148,10 @@ public partial class MainViewModel : ObservableObject
         _hotkeyService.ProfilePlaybackRequested += (_, profileName) =>
             Application.Current.Dispatcher.BeginInvoke(() => HandleProfilePlaybackHotkey(profileName));
         _hotkeyService.StartListening();
+        _scheduleTimer.Start();
 
         RefreshHotkeyTexts();
+        UpdateScheduleSummary();
         _logger.Info("MainViewModel", "主界面模型初始化完成");
     }
 
@@ -197,6 +225,16 @@ public partial class MainViewModel : ObservableObject
         UpdateStatus();
     }
 
+    partial void OnPlaybackStartStepChanged(int value)
+    {
+        var normalized = Math.Max(1, value);
+        if (value != normalized)
+        {
+            PlaybackStartStep = normalized;
+            return;
+        }
+    }
+
     partial void OnSelectedProfileChanged(RecordProfile? value)
     {
         if (value is null)
@@ -205,6 +243,8 @@ public partial class MainViewModel : ObservableObject
                 LoopCount = 1;
             if (Math.Abs(PlaybackSpeed - 1.0) > 0.001)
                 PlaybackSpeed = 1.0;
+            if (PlaybackStartStep != 1)
+                PlaybackStartStep = 1;
             return;
         }
 
@@ -214,6 +254,10 @@ public partial class MainViewModel : ObservableObject
         var speed = NormalizePlaybackSpeed(value.PlaybackSpeed);
         if (Math.Abs(PlaybackSpeed - speed) > 0.001)
             PlaybackSpeed = speed;
+
+        value.PlaybackStartStep = 1;
+        if (PlaybackStartStep != 1)
+            PlaybackStartStep = 1;
 
         ActionListVm.LoadFromProfile(value);
         VariableEditorVm.LoadFromProfile(value);
@@ -262,9 +306,11 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
+            var oldName = SelectedProfile.Name;
             var renamed = _profileManager.RenameProfile(SelectedProfile, newName);
             Profiles = _profileManager.Profiles;
             SelectedProfile = renamed;
+            RenameScheduledProfile(oldName, renamed.Name);
         }
         catch (Exception ex)
         {
@@ -290,6 +336,7 @@ public partial class MainViewModel : ObservableObject
         SelectedProfile = null;
         _profileManager.DeleteProfile(profile);
         Profiles = _profileManager.Profiles;
+        RemoveSchedulesForProfile(profile.Name);
     }
 
     [RelayCommand]
@@ -309,6 +356,28 @@ public partial class MainViewModel : ObservableObject
 
         System.Windows.MessageBox.Show(
             "快捷键已更新。",
+            "设置成功", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+    }
+
+    [RelayCommand]
+    private void OpenScheduleSettings()
+    {
+        var dialog = new Views.ScheduleSettingsDialog(
+            _scheduleSettings,
+            Profiles.Select(p => p.Name),
+            SelectedProfile?.Name)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || dialog.Result is null) return;
+
+        _scheduleSettings = dialog.Result;
+        _scheduleSettings.Save();
+        UpdateScheduleSummary();
+
+        System.Windows.MessageBox.Show(
+            "定时执行设置已保存。",
             "设置成功", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
     }
 
@@ -392,6 +461,7 @@ public partial class MainViewModel : ObservableObject
             SelectedProfile = Profiles.FirstOrDefault(p => p.Name == selectedName) ?? Profiles.FirstOrDefault();
             _hotkeyService.ReloadSettings();
             RefreshHotkeyTexts();
+            ReloadScheduleSettings();
 
             System.Windows.MessageBox.Show(
                 "全局配置已导入成功。\n\n所有方案、方案设置、变量表、图片和快捷键已经恢复。",
@@ -427,6 +497,7 @@ public partial class MainViewModel : ObservableObject
 
         if (IsRecording)
         {
+            var hadExistingActions = ActionListVm.Actions.Count > 0;
             _recordingService.StopRecording();
             IsRecording = false;
             IsPaused = false;
@@ -434,6 +505,23 @@ public partial class MainViewModel : ObservableObject
             if (SelectedProfile is not null)
             {
                 var events = _recordingService.GetRecordedEvents();
+
+                if (hadExistingActions)
+                {
+                    var confirmSave = System.Windows.MessageBox.Show(
+                        "录制已经停止。\n\n是否保存这次录制，并覆盖当前方案？\n选择“否”会丢弃本次录制，保留原来的方案。",
+                        "确认保存录制",
+                        System.Windows.MessageBoxButton.YesNo,
+                        System.Windows.MessageBoxImage.Warning,
+                        System.Windows.MessageBoxResult.No);
+
+                    if (confirmSave != System.Windows.MessageBoxResult.Yes)
+                    {
+                        ActionListVm.LoadFromProfile(SelectedProfile);
+                        return;
+                    }
+                }
+
                 _profileManager.SaveActions(SelectedProfile, events);
                 VariableEditorVm.SaveCsv();
                 ActionListVm.LoadFromProfile(SelectedProfile);
@@ -446,6 +534,20 @@ public partial class MainViewModel : ObservableObject
                 NewProfile();
                 if (SelectedProfile is null) return;
             }
+
+            if (ActionListVm.Actions.Count > 0)
+            {
+                var confirm = System.Windows.MessageBox.Show(
+                    "当前方案已有脚本步骤。开始录制并停止后，会用新录制内容覆盖当前方案。\n\n确定继续录制吗？",
+                    "确认覆盖当前方案",
+                    System.Windows.MessageBoxButton.YesNo,
+                    System.Windows.MessageBoxImage.Warning,
+                    System.Windows.MessageBoxResult.No);
+
+                if (confirm != System.Windows.MessageBoxResult.Yes)
+                    return;
+            }
+
             _recordingService.StartRecording();
             IsRecording = true;
             IsPaused = false;
@@ -522,14 +624,7 @@ public partial class MainViewModel : ObservableObject
         if (SelectedProfile is null || ActionListVm.Actions.Count == 0)
             return;
 
-        VariableEditorVm.SaveCsv();
-        IsPlaying = true;
-        SetCurrentStepWaiting("准备播放", "正在读取步骤");
-        await _playbackService.StartPlaybackAsync(
-            ActionListVm.Actions.ToList(),
-            VariableEditorVm.VariableTable,
-            SelectedProfile.LoopCount,
-            PlaybackSpeed);
+        await StartProfilePlaybackAsync(SelectedProfile, "准备播放");
     }
 
     /// <summary>
@@ -552,16 +647,192 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        if (ActionListVm.Actions.Count == 0) return;
+        await StartProfilePlaybackAsync(profile, "准备播放");
+    }
+
+    private async void HandleStartPlaybackFromStep(int stepNumber)
+    {
+        try
+        {
+            if (SelectedProfile is null || IsRecording || IsPlaying || ActionListVm.Actions.Count == 0)
+                return;
+
+            var startStep = NormalizePlaybackStartStep(stepNumber, ActionListVm.Actions.Count);
+            if (PlaybackStartStep != startStep)
+                PlaybackStartStep = startStep;
+
+            MiniModeRequested?.Invoke(this, EventArgs.Empty);
+            await StartProfilePlaybackAsync(SelectedProfile, $"从第 {startStep} 步播放", startStep);
+        }
+        catch (Exception ex)
+        {
+            IsPlaying = false;
+            IsPaused = false;
+            _logger.Error("Playback", $"从第 {stepNumber} 步开始执行失败", ex, captureScreenshot: true);
+            System.Windows.MessageBox.Show(
+                ex.Message,
+                "从此步开始执行失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
+    }
+
+    private async Task StartProfilePlaybackAsync(RecordProfile profile, string waitingText, int? startStepOverride = null)
+    {
+        if (IsRecording || IsPlaying) return;
+
+        if (!ReferenceEquals(SelectedProfile, profile))
+        {
+            SaveCurrentProfileData();
+            SelectedProfile = profile;
+        }
+
+        if (ActionListVm.Actions.Count == 0)
+        {
+            StatusText = $"方案「{profile.Name}」没有脚本步骤";
+            return;
+        }
+
+        var requestedStartStep = startStepOverride ?? PlaybackStartStep;
+        var startStep = NormalizePlaybackStartStep(requestedStartStep, ActionListVm.Actions.Count);
+        if (PlaybackStartStep != startStep)
+            PlaybackStartStep = startStep;
 
         VariableEditorVm.SaveCsv();
         IsPlaying = true;
-        SetCurrentStepWaiting("准备播放", "正在读取步骤");
-        await _playbackService.StartPlaybackAsync(
-            ActionListVm.Actions.ToList(),
-            VariableEditorVm.VariableTable,
-            profile.LoopCount,
-            PlaybackSpeed);
+        SetCurrentStepWaiting(waitingText, "正在读取步骤");
+        SetCurrentStepWaiting(waitingText, $"从第 {startStep} 步开始执行");
+        try
+        {
+            await _playbackService.StartPlaybackAsync(
+                ActionListVm.Actions.ToList(),
+                VariableEditorVm.VariableTable,
+                profile.LoopCount,
+                PlaybackSpeed,
+                startStep);
+        }
+        finally
+        {
+            ResetPlaybackStartStep();
+        }
+    }
+
+    private async void OnScheduleTimerTick(object? sender, EventArgs e)
+    {
+        if (_scheduleTickRunning) return;
+
+        _scheduleTickRunning = true;
+        try
+        {
+            await CheckSchedulesAsync(DateTime.Now);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Schedule", "定时执行检查失败", ex, captureScreenshot: true);
+        }
+        finally
+        {
+            _scheduleTickRunning = false;
+        }
+    }
+
+    private async Task CheckSchedulesAsync(DateTime now)
+    {
+        var dueTask = _scheduleSettings.Tasks
+            .Where(task => task.IsDue(now))
+            .OrderBy(task => task.TryGetScheduledRunAt(now, out var runAt) ? runAt : DateTime.MaxValue)
+            .FirstOrDefault();
+
+        if (dueTask is null)
+            return;
+
+        dueTask.MarkTriggered(now);
+        _scheduleSettings.Save();
+        UpdateScheduleSummary();
+
+        var profile = Profiles.FirstOrDefault(p =>
+            string.Equals(p.Name, dueTask.ProfileName, StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+        {
+            _logger.Warn("Schedule", $"定时任务找不到方案，已跳过: {dueTask.ProfileName}");
+            return;
+        }
+
+        if (IsRecording || IsPlaying)
+        {
+            _logger.Warn("Schedule", $"软件正在录制或播放，定时任务已跳过: {profile.Name}");
+            StatusText = $"定时任务已跳过: {profile.Name}";
+            return;
+        }
+
+        _logger.Info("Schedule", $"定时执行方案: {profile.Name}, mode={dueTask.RepeatMode}, time={dueTask.TimeText}");
+        await StartProfilePlaybackAsync(profile, $"定时执行: {profile.Name}");
+    }
+
+    private void UpdateScheduleSummary()
+    {
+        var now = DateTime.Now;
+        var next = _scheduleSettings.Tasks
+            .Select(task => new
+            {
+                Task = task,
+                NextRun = task.GetNextRunAfter(now)
+            })
+            .Where(item => item.NextRun is not null)
+            .OrderBy(item => item.NextRun)
+            .FirstOrDefault();
+
+        if (next is null)
+        {
+            ScheduleSummaryText = "定时: 未设置";
+            return;
+        }
+
+        var runAt = next.NextRun!.Value;
+        var dayText = runAt.Date == now.Date
+            ? "今天"
+            : runAt.Date == now.Date.AddDays(1)
+                ? "明天"
+                : runAt.ToString("MM-dd");
+        var timeFormat = next.Task.RepeatMode == ScheduleRepeatMode.IntervalSeconds
+            ? "HH:mm:ss"
+            : "HH:mm";
+        ScheduleSummaryText = $"定时: {next.Task.ProfileName} {dayText} {runAt.ToString(timeFormat)}";
+    }
+
+    private void ReloadScheduleSettings()
+    {
+        _scheduleSettings = ScheduledTaskSettings.Load();
+        UpdateScheduleSummary();
+    }
+
+    private void RenameScheduledProfile(string oldName, string newName)
+    {
+        var changed = false;
+        foreach (var task in _scheduleSettings.Tasks)
+        {
+            if (!string.Equals(task.ProfileName, oldName, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            task.ProfileName = newName;
+            changed = true;
+        }
+
+        if (!changed) return;
+
+        _scheduleSettings.Save();
+        UpdateScheduleSummary();
+    }
+
+    private void RemoveSchedulesForProfile(string profileName)
+    {
+        var removed = _scheduleSettings.Tasks.RemoveAll(task =>
+            string.Equals(task.ProfileName, profileName, StringComparison.OrdinalIgnoreCase));
+
+        if (removed <= 0) return;
+
+        _scheduleSettings.Save();
+        UpdateScheduleSummary();
     }
 
     private async void HandlePlaybackHotkey()
@@ -630,8 +901,18 @@ public partial class MainViewModel : ObservableObject
         {
             IsPlaying = false;
             IsPaused = false;
+            ResetPlaybackStartStep();
             SetCurrentStepWaiting("等待任务", "就绪");
         });
+    }
+
+    private void ResetPlaybackStartStep()
+    {
+        if (PlaybackStartStep != 1)
+            PlaybackStartStep = 1;
+
+        if (SelectedProfile is not null)
+            SelectedProfile.PlaybackStartStep = 1;
     }
 
     private void OnPlaybackStepChanged(object? sender, PlaybackStepChangedEventArgs e)
@@ -646,6 +927,22 @@ public partial class MainViewModel : ObservableObject
                 : null;
             CurrentStepHasImage = CurrentStepImagePath is not null;
             CurrentStepBadgeText = BuildCurrentStepBadge(action);
+            SetDelayStatus("状态", "执行中");
+        });
+    }
+
+    private void OnPlaybackDelayChanged(object? sender, PlaybackDelayChangedEventArgs e)
+    {
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            if (!e.IsActive)
+            {
+                SetDelayStatus("状态", IsPlaying ? "执行中" : "待命");
+                return;
+            }
+
+            CurrentDelayLabel = e.Label;
+            CurrentDelayText = FormatDelayText(e.RemainingMs);
         });
     }
 
@@ -656,6 +953,13 @@ public partial class MainViewModel : ObservableObject
         CurrentStepImagePath = null;
         CurrentStepHasImage = false;
         CurrentStepBadgeText = "待命";
+        SetDelayStatus("状态", IsPlaying ? "执行中" : "待命");
+    }
+
+    private void SetDelayStatus(string label, string text)
+    {
+        CurrentDelayLabel = label;
+        CurrentDelayText = text;
     }
 
     private static string BuildCurrentStepDetail(InputEvent action)
@@ -707,11 +1011,27 @@ public partial class MainViewModel : ObservableObject
         return singleLine.Length <= 20 ? singleLine : $"{singleLine[..20]}...";
     }
 
+    private static string FormatDelayText(int remainingMs)
+    {
+        var seconds = Math.Max(0, remainingMs) / 1000.0;
+        return seconds >= 10
+            ? $"{Math.Ceiling(seconds):0}秒"
+            : $"{seconds:0.0}秒";
+    }
+
     private static double NormalizePlaybackSpeed(double value)
     {
         if (double.IsNaN(value) || double.IsInfinity(value))
             return 1.0;
 
         return Math.Clamp(value, MinPlaybackSpeed, MaxPlaybackSpeed);
+    }
+
+    private static int NormalizePlaybackStartStep(int value, int actionCount)
+    {
+        if (actionCount <= 0)
+            return 1;
+
+        return Math.Clamp(value, 1, actionCount);
     }
 }
