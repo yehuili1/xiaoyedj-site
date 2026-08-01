@@ -724,7 +724,9 @@ public partial class MainViewModel : ObservableObject
         _scheduleTickRunning = true;
         try
         {
-            await CheckSchedulesAsync(DateTime.Now);
+            var now = DateTime.Now;
+            UpdateScheduleCountdown(now);
+            await CheckSchedulesAsync(now);
         }
         catch (Exception ex)
         {
@@ -785,6 +787,7 @@ public partial class MainViewModel : ObservableObject
         if (next is null)
         {
             ScheduleSummaryText = "定时: 未设置";
+            UpdateScheduleCountdown(now);
             return;
         }
 
@@ -798,6 +801,26 @@ public partial class MainViewModel : ObservableObject
             ? "HH:mm:ss"
             : "HH:mm";
         ScheduleSummaryText = $"定时: {next.Task.ProfileName} {dayText} {runAt.ToString(timeFormat)}";
+        UpdateScheduleCountdown(now);
+    }
+
+    private void UpdateScheduleCountdown(DateTime now)
+    {
+        if (IsPlaying)
+            return;
+
+        var nextRun = _scheduleSettings.Tasks
+            .Select(task => task.GetNextRunAfter(now))
+            .Where(runAt => runAt is not null)
+            .Min();
+
+        if (nextRun is null)
+        {
+            SetDelayStatus("状态", "待命");
+            return;
+        }
+
+        SetDelayStatus("定时任务", FormatScheduleCountdown(nextRun.Value - now));
     }
 
     private void ReloadScheduleSettings()
@@ -903,6 +926,7 @@ public partial class MainViewModel : ObservableObject
             IsPaused = false;
             ResetPlaybackStartStep();
             SetCurrentStepWaiting("等待任务", "就绪");
+            UpdateScheduleCountdown(DateTime.Now);
         });
     }
 
@@ -937,7 +961,10 @@ public partial class MainViewModel : ObservableObject
         {
             if (!e.IsActive)
             {
-                SetDelayStatus("状态", IsPlaying ? "执行中" : "待命");
+                if (IsPlaying)
+                    SetDelayStatus("状态", "执行中");
+                else
+                    UpdateScheduleCountdown(DateTime.Now);
                 return;
             }
 
@@ -953,7 +980,10 @@ public partial class MainViewModel : ObservableObject
         CurrentStepImagePath = null;
         CurrentStepHasImage = false;
         CurrentStepBadgeText = "待命";
-        SetDelayStatus("状态", IsPlaying ? "执行中" : "待命");
+        if (IsPlaying)
+            SetDelayStatus("状态", "执行中");
+        else
+            UpdateScheduleCountdown(DateTime.Now);
     }
 
     private void SetDelayStatus(string label, string text)
@@ -1017,6 +1047,26 @@ public partial class MainViewModel : ObservableObject
         return seconds >= 10
             ? $"{Math.Ceiling(seconds):0}秒"
             : $"{seconds:0.0}秒";
+    }
+
+    private static string FormatScheduleCountdown(TimeSpan remaining)
+    {
+        var totalSeconds = Math.Max(0, (int)Math.Ceiling(remaining.TotalSeconds));
+        if (totalSeconds == 0)
+            return "即将执行";
+
+        var days = totalSeconds / 86400;
+        var hours = totalSeconds % 86400 / 3600;
+        var minutes = totalSeconds % 3600 / 60;
+        var seconds = totalSeconds % 60;
+
+        if (days > 0)
+            return $"{days}天{hours}时";
+        if (hours > 0)
+            return $"{hours}时{minutes}分";
+        if (minutes > 0)
+            return $"{minutes}分{seconds}秒";
+        return $"{seconds}秒";
     }
 
     private static double NormalizePlaybackSpeed(double value)

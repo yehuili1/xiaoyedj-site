@@ -24,6 +24,7 @@ public class ScheduledTaskItem
     public string TimeText { get; set; } = "09:00";
     public int IntervalHours { get; set; } = 1;
     public int IntervalSeconds { get; set; } = 10;
+    public int ActiveDurationMinutes { get; set; }
     public DateTime IntervalStartedAt { get; set; } = DateTime.Now;
     public DateTime? LastTriggeredAt { get; set; }
 
@@ -59,10 +60,17 @@ public class ScheduledTaskItem
 
         if (IsIntervalMode)
         {
+            var expiresAt = GetExpiresAt();
+            if (expiresAt is not null && now >= expiresAt.Value)
+                return null;
+
             var baseAt = LastTriggeredAt ?? IntervalStartedAt;
             var nextRun = RepeatMode == ScheduleRepeatMode.IntervalSeconds
                 ? baseAt.AddSeconds(Math.Clamp(IntervalSeconds, 1, 86400))
                 : baseAt.AddHours(Math.Clamp(IntervalHours, 1, 720));
+            if (expiresAt is not null && nextRun >= expiresAt.Value)
+                return null;
+
             return nextRun <= now ? now : nextRun;
         }
 
@@ -131,6 +139,14 @@ public class ScheduledTaskItem
     [JsonIgnore]
     private bool IsIntervalMode =>
         RepeatMode is ScheduleRepeatMode.IntervalHours or ScheduleRepeatMode.IntervalSeconds;
+
+    private DateTime? GetExpiresAt()
+    {
+        var durationMinutes = Math.Clamp(ActiveDurationMinutes, 0, 525600);
+        return durationMinutes == 0
+            ? null
+            : IntervalStartedAt.AddMinutes(durationMinutes);
+    }
 }
 
 public class ScheduledTaskSettings
@@ -187,6 +203,7 @@ public class ScheduledTaskSettings
 
             task.IntervalHours = Math.Clamp(task.IntervalHours, 1, 720);
             task.IntervalSeconds = Math.Clamp(task.IntervalSeconds, 1, 86400);
+            task.ActiveDurationMinutes = Math.Clamp(task.ActiveDurationMinutes, 0, 525600);
             if (task.IntervalStartedAt == default)
                 task.IntervalStartedAt = DateTime.Now;
 

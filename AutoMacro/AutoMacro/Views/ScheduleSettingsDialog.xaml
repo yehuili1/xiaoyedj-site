@@ -38,6 +38,7 @@
                   AutoGenerateColumns="False"
                   CanUserAddRows="False"
                   CanUserDeleteRows="False"
+                  FrozenColumnCount="2"
                   HeadersVisibility="Column"
                   GridLinesVisibility="Horizontal"
                   ItemsSource="{Binding Tasks}">
@@ -46,7 +47,19 @@
                                         Width="56"
                                         Binding="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
 
-                <DataGridTemplateColumn Header="方案" Width="160">
+                <DataGridTemplateColumn Header="操作" Width="72">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ui:Button Content="删除"
+                                       Appearance="Danger"
+                                       Padding="8,4"
+                                       Tag="{Binding}"
+                                       Click="DeleteTask_Click" />
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+
+                <DataGridTemplateColumn Header="方案" Width="150">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <ComboBox ItemsSource="{Binding DataContext.ProfileNames, RelativeSource={RelativeSource AncestorType=DataGrid}}"
@@ -56,7 +69,7 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
 
-                <DataGridTemplateColumn Header="触发器" Width="140">
+                <DataGridTemplateColumn Header="触发器" Width="130">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <ComboBox ItemsSource="{Binding DataContext.ModeOptions, RelativeSource={RelativeSource AncestorType=DataGrid}}"
@@ -68,11 +81,12 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
 
-                <DataGridTemplateColumn Header="参数" Width="260">
+                <DataGridTemplateColumn Header="参数" Width="240">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <Grid>
                                 <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
@@ -138,6 +152,23 @@
                                            FontSize="11"
                                            TextTrimming="CharacterEllipsis"
                                            Margin="0,4,0,0" />
+
+                                <StackPanel Grid.Row="2"
+                                            Orientation="Horizontal"
+                                            Margin="0,5,0,0"
+                                            Visibility="{Binding IsIntervalMode, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                    <TextBlock Text="持续"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               Margin="0,0,6,0" />
+                                    <TextBox Text="{Binding ActiveDurationMinutes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             MinWidth="48" />
+                                    <TextBlock Text="分钟后停止（0=不限）"
+                                               VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                               FontSize="11"
+                                               Margin="6,0,0,0" />
+                                </StackPanel>
                             </Grid>
                         </DataTemplate>
                     </DataGridTemplateColumn.CellTemplate>
@@ -153,17 +184,6 @@
                                     Binding="{Binding LastRunText}"
                                     IsReadOnly="True" />
 
-                <DataGridTemplateColumn Header="操作" Width="80">
-                    <DataGridTemplateColumn.CellTemplate>
-                        <DataTemplate>
-                            <ui:Button Content="删除"
-                                       Appearance="Danger"
-                                       Padding="8,4"
-                                       Tag="{Binding}"
-                                       Click="DeleteTask_Click" />
-                        </DataTemplate>
-                    </DataGridTemplateColumn.CellTemplate>
-                </DataGridTemplateColumn>
             </DataGrid.Columns>
         </DataGrid>
 

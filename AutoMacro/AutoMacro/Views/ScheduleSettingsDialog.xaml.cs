@@ -38,6 +38,9 @@ public partial class ScheduleTaskEditorRow : ObservableObject
     private int _intervalSeconds = 10;
 
     [ObservableProperty]
+    private int _activeDurationMinutes;
+
+    [ObservableProperty]
     private DateTime _intervalStartedAt = DateTime.Now;
 
     [ObservableProperty]
@@ -47,6 +50,7 @@ public partial class ScheduleTaskEditorRow : ObservableObject
     public bool IsDaily => RepeatMode == ScheduleRepeatMode.Daily;
     public bool IsIntervalHours => RepeatMode == ScheduleRepeatMode.IntervalHours;
     public bool IsIntervalSeconds => RepeatMode == ScheduleRepeatMode.IntervalSeconds;
+    public bool IsIntervalMode => IsIntervalHours || IsIntervalSeconds;
 
     public string TriggerHint => RepeatMode switch
     {
@@ -66,6 +70,7 @@ public partial class ScheduleTaskEditorRow : ObservableObject
         OnPropertyChanged(nameof(IsDaily));
         OnPropertyChanged(nameof(IsIntervalHours));
         OnPropertyChanged(nameof(IsIntervalSeconds));
+        OnPropertyChanged(nameof(IsIntervalMode));
         OnPropertyChanged(nameof(TriggerHint));
         OnPropertyChanged(nameof(NextRunText));
 
@@ -95,6 +100,7 @@ public partial class ScheduleTaskEditorRow : ObservableObject
         TimeText = TimeText,
         IntervalHours = Math.Clamp(IntervalHours, 1, 720),
         IntervalSeconds = Math.Clamp(IntervalSeconds, 1, 86400),
+        ActiveDurationMinutes = Math.Clamp(ActiveDurationMinutes, 0, 525600),
         IntervalStartedAt = IntervalStartedAt == default ? DateTime.Now : IntervalStartedAt,
         LastTriggeredAt = LastTriggeredAt
     };
@@ -156,6 +162,7 @@ public partial class ScheduleSettingsDialog : FluentWindow
                 TimeText = task.TimeText,
                 IntervalHours = Math.Clamp(task.IntervalHours, 1, 720),
                 IntervalSeconds = Math.Clamp(task.IntervalSeconds, 1, 86400),
+                ActiveDurationMinutes = Math.Clamp(task.ActiveDurationMinutes, 0, 525600),
                 IntervalStartedAt = task.IntervalStartedAt == default ? DateTime.Now : task.IntervalStartedAt,
                 LastTriggeredAt = task.LastTriggeredAt
             });
@@ -183,6 +190,7 @@ public partial class ScheduleSettingsDialog : FluentWindow
             TimeText = nextTime.ToString("HH:mm"),
             IntervalHours = 1,
             IntervalSeconds = 10,
+            ActiveDurationMinutes = 0,
             IntervalStartedAt = DateTime.Now,
             IsEnabled = true
         });
@@ -249,6 +257,14 @@ public partial class ScheduleSettingsDialog : FluentWindow
                 return;
             }
 
+            if (row.IsIntervalMode && row.ActiveDurationMinutes is < 0 or > 525600)
+            {
+                MessageBox.Show(
+                    "持续运行时间请填写 0 到 525600 之间的整数分钟，0 表示不限时。",
+                    "持续时间错误", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             var runDate = row.RunDate == default ? DateTime.Today : row.RunDate.Date;
             if (row.IsEnabled && row.RepeatMode == ScheduleRepeatMode.Once)
             {
@@ -262,6 +278,7 @@ public partial class ScheduleSettingsDialog : FluentWindow
                 }
             }
 
+            var isIntervalMode = row.IsIntervalMode;
             result.Tasks.Add(new ScheduledTaskItem
             {
                 Id = string.IsNullOrWhiteSpace(row.Id) ? Guid.NewGuid().ToString("N") : row.Id,
@@ -274,8 +291,11 @@ public partial class ScheduleSettingsDialog : FluentWindow
                     : ScheduledTaskItem.FormatTimeText(time),
                 IntervalHours = Math.Clamp(row.IntervalHours, 1, 720),
                 IntervalSeconds = Math.Clamp(row.IntervalSeconds, 1, 86400),
-                IntervalStartedAt = row.IntervalStartedAt == default ? DateTime.Now : row.IntervalStartedAt,
-                LastTriggeredAt = row.LastTriggeredAt
+                ActiveDurationMinutes = Math.Clamp(row.ActiveDurationMinutes, 0, 525600),
+                IntervalStartedAt = isIntervalMode
+                    ? DateTime.Now
+                    : row.IntervalStartedAt == default ? DateTime.Now : row.IntervalStartedAt,
+                LastTriggeredAt = isIntervalMode ? null : row.LastTriggeredAt
             });
         }
 
