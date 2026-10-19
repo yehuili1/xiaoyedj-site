@@ -31,4 +31,10 @@ public interface IOcrService
         int timeoutMs,
         OcrRegion? region,
         CancellationToken cancellationToken);
+
+    Task<OcrTextMatch> FindTextOnceAsync(
+        string text,
+        OcrRegion? region,
+        CancellationToken cancellationToken,
+        bool maskOwnWindows = true);
 }

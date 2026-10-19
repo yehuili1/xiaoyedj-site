@@ -7,4 +7,11 @@ public interface IImageRecognitionService
         double threshold,
         int timeoutMs,
         CancellationToken cancellationToken);
+
+    Task<(bool Found, int X, int Y, double Score)> FindImageOnceAsync(
+        string imagePath,
+        double threshold,
+        OcrRegion? region,
+        CancellationToken cancellationToken,
+        bool maskOwnWindows = true);
 }

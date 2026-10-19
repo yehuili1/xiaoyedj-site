@@ -176,6 +176,11 @@ public class WindowAutomationService : IWindowAutomationService
         return ok;
     }
 
+    public bool IsWindowAvailable(string titleKeyword)
+    {
+        return !string.IsNullOrWhiteSpace(titleKeyword) && FindWindow(titleKeyword) is not null;
+    }
+
     public async Task<bool> WaitForWindowAsync(string titleKeyword, int timeoutMs, CancellationToken cancellationToken)
     {
         var endAt = DateTime.UtcNow.AddMilliseconds(Math.Max(0, timeoutMs));

@@ -1,5 +1,7 @@
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Windows.Graphics.Imaging;
 using Windows.Globalization;
@@ -22,20 +24,53 @@ public class WindowsOcrService : IOcrService
         OcrRegion? region,
         CancellationToken cancellationToken)
     {
+        return await RecognizeScreenCoreAsync(region, writeLog: true, cancellationToken);
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out WindowRect rect);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct WindowRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    private async Task<OcrReadResult> RecognizeScreenCoreAsync(
+        OcrRegion? region,
+        bool writeLog,
+        CancellationToken cancellationToken,
+        bool maskOwnWindows = true)
+    {
         try
         {
             var engine = CreateEngine();
             if (engine is null)
                 return FailedRead("本机 OCR 不可用，请确认 Windows 已安装中文识别语言包。");
 
-            using var capture = CaptureScreen(region);
+            using var capture = CaptureScreen(region, maskOwnWindows);
             using var ocrBitmap = ResizeForOcr(capture.Bitmap, out var scale);
             using var softwareBitmap = BitmapToSoftwareBitmap(ocrBitmap);
             var result = await engine.RecognizeAsync(softwareBitmap).AsTask(cancellationToken);
             var textBoxes = BuildTextBoxes(result, capture.Left, capture.Top, scale);
             var text = result.Text?.Trim() ?? string.Empty;
 
-            _logger.Info("OCR", $"识别完成: length={text.Length}, boxes={textBoxes.Count}");
+            if (writeLog)
+                _logger.Info("OCR", $"识别完成: length={text.Length}, boxes={textBoxes.Count}");
             return new OcrReadResult(true, text, textBoxes, string.Empty);
         }
         catch (OperationCanceledException)
@@ -44,9 +79,38 @@ public class WindowsOcrService : IOcrService
         }
         catch (Exception ex)
         {
-            _logger.Error("OCR", "识别文字失败", ex, captureScreenshot: true);
+            if (writeLog)
+                _logger.Error("OCR", "识别文字失败", ex, captureScreenshot: true);
             return FailedRead(ex.Message);
         }
+    }
+
+    public async Task<OcrTextMatch> FindTextOnceAsync(
+        string text,
+        OcrRegion? region,
+        CancellationToken cancellationToken,
+        bool maskOwnWindows = true)
+    {
+        var keyword = text.Trim();
+        if (string.IsNullOrWhiteSpace(keyword))
+            return FailedMatch("要查找的文字不能为空。");
+
+        var read = await RecognizeScreenCoreAsync(region, writeLog: false, cancellationToken, maskOwnWindows);
+        if (!read.Success)
+            return FailedMatch(read.ErrorMessage);
+
+        var match = FindMatch(read, keyword);
+        return match is null
+            ? new OcrTextMatch(false, string.Empty, 0, 0, 0, 0, read.Text, string.Empty)
+            : new OcrTextMatch(
+                true,
+                match.Text,
+                match.X,
+                match.Y,
+                match.Width,
+                match.Height,
+                read.Text,
+                string.Empty);
     }
 
     public async Task<OcrTextMatch> FindTextAsync(
@@ -126,7 +190,7 @@ public class WindowsOcrService : IOcrService
         return OcrEngine.TryCreateFromUserProfileLanguages();
     }
 
-    private static ScreenCapture CaptureScreen(OcrRegion? region)
+    private static ScreenCapture CaptureScreen(OcrRegion? region, bool maskOwnWindows = true)
     {
         var virtualScreen = WinForms.SystemInformation.VirtualScreen;
         var left = region?.X ?? virtualScreen.Left;
@@ -140,7 +204,42 @@ public class WindowsOcrService : IOcrService
         var bitmap = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.CopyFromScreen(left, top, 0, 0, new Size(width, height));
+        if (maskOwnWindows)
+            MaskOwnWindows(graphics, left, top, width, height);
         return new ScreenCapture(bitmap, left, top);
+    }
+
+    private static void MaskOwnWindows(Graphics graphics, int screenLeft, int screenTop, int screenWidth, int screenHeight)
+    {
+        var currentProcessId = (uint)Process.GetCurrentProcess().Id;
+        var screenRect = new Rectangle(screenLeft, screenTop, screenWidth, screenHeight);
+        using var brush = new HatchBrush(
+            HatchStyle.WideDownwardDiagonal,
+            Color.FromArgb(255, 255, 0, 255),
+            Color.FromArgb(255, 0, 255, 0));
+
+        EnumWindows((handle, _) =>
+        {
+            if (!IsWindowVisible(handle))
+                return true;
+
+            GetWindowThreadProcessId(handle, out var processId);
+            if (processId != currentProcessId || !GetWindowRect(handle, out var rect))
+                return true;
+
+            var windowRect = Rectangle.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom);
+            var clipped = Rectangle.Intersect(screenRect, windowRect);
+            if (clipped.IsEmpty)
+                return true;
+
+            graphics.FillRectangle(
+                brush,
+                clipped.Left - screenLeft,
+                clipped.Top - screenTop,
+                clipped.Width,
+                clipped.Height);
+            return true;
+        }, IntPtr.Zero);
     }
 
     private static Bitmap ResizeForOcr(Bitmap source, out double scale)

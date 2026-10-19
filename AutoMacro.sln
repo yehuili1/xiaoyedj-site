@@ -7,6 +7,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "AutoMacro", "AutoMacro", "{
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoMacro", "AutoMacro\AutoMacro\AutoMacro.csproj", "{4B5147DB-4B9F-42B0-B57B-AE06E5A58A21}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AutoMacro.Tests", "AutoMacro\AutoMacro.Tests\AutoMacro.Tests.csproj", "{9B64E87D-3E94-4FE2-9E5E-6A81C4A8F7C2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -20,8 +22,13 @@ Global
 		{4B5147DB-4B9F-42B0-B57B-AE06E5A58A21}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{4B5147DB-4B9F-42B0-B57B-AE06E5A58A21}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{4B5147DB-4B9F-42B0-B57B-AE06E5A58A21}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9B64E87D-3E94-4FE2-9E5E-6A81C4A8F7C2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9B64E87D-3E94-4FE2-9E5E-6A81C4A8F7C2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9B64E87D-3E94-4FE2-9E5E-6A81C4A8F7C2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9B64E87D-3E94-4FE2-9E5E-6A81C4A8F7C2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{4B5147DB-4B9F-42B0-B57B-AE06E5A58A21} = {A58CBF1C-27B8-41A9-B7E4-B092D66ED42C}
+		{9B64E87D-3E94-4FE2-9E5E-6A81C4A8F7C2} = {A58CBF1C-27B8-41A9-B7E4-B092D66ED42C}
 	EndGlobalSection
 EndGlobal

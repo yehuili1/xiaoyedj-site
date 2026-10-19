@@ -9,11 +9,11 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationIcon>Assets\icon.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>全能脚本V2.2.10</AssemblyName>
-    <Product>全能脚本V2.2.10</Product>
-    <Version>2.2.10</Version>
-    <FileVersion>2.2.10.0</FileVersion>
-    <AssemblyVersion>2.2.10.0</AssemblyVersion>
+    <AssemblyName>全能脚本V2.3.1</AssemblyName>
+    <Product>全能脚本V2.3.1</Product>
+    <Version>2.3.1</Version>
+    <FileVersion>2.3.1.0</FileVersion>
+    <AssemblyVersion>2.3.1.0</AssemblyVersion>
   </PropertyGroup>
 
   <ItemGroup>

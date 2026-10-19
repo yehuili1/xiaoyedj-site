@@ -29,6 +29,7 @@ public partial class MainWindow : FluentWindow
         _trayIcon.ExitRequested += (_, _) => Dispatcher.Invoke(ForceExit);
         _trayIcon.ToggleRecordRequested += (_, _) => Dispatcher.Invoke(() => ViewModel.ToggleRecordingCommand.Execute(null));
         _trayIcon.TogglePlaybackRequested += (_, _) => Dispatcher.Invoke(() => ViewModel.TogglePlaybackCommand.Execute(null));
+        _trayIcon.ToggleMonitorRequested += (_, _) => Dispatcher.Invoke(() => ViewModel.ToggleMonitoringCommand.Execute(null));
         _trayIcon.StopRequested += (_, _) => Dispatcher.Invoke(() => ViewModel.EmergencyStopCommand.Execute(null));
         _trayIcon.MiniModeRequested += (_, _) => Dispatcher.Invoke(SwitchToMiniMode);
 
@@ -95,9 +96,9 @@ public partial class MainWindow : FluentWindow
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(MainViewModel.IsRecording) or nameof(MainViewModel.IsPlaying))
+        if (e.PropertyName is nameof(MainViewModel.IsRecording) or nameof(MainViewModel.IsPlaying) or nameof(MainViewModel.IsMonitoring))
         {
-            _trayIcon.SetState(ViewModel.IsRecording, ViewModel.IsPlaying);
+            _trayIcon.SetState(ViewModel.IsRecording, ViewModel.IsPlaying, ViewModel.IsMonitoring);
         }
     }
 

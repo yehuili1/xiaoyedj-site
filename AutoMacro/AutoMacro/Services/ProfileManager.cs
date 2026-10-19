@@ -18,6 +18,8 @@ public class ProfileManager : IProfileManager
         public int LoopCount { get; set; } = 1;
         public double PlaybackSpeed { get; set; } = 1.0;
         public int PlaybackStartStep { get; set; } = 1;
+        public AutomationMode Mode { get; set; } = AutomationMode.Standard;
+        public MonitorTriggerSettings MonitorSettings { get; set; } = new();
     }
 
     private sealed class GlobalConfigManifest
@@ -103,6 +105,20 @@ public class ProfileManager : IProfileManager
 
         Directory.Move(profile.FolderPath, newFolderPath);
 
+        var monitorSettings = profile.MonitorSettings.Clone();
+        if (!string.IsNullOrWhiteSpace(monitorSettings.ImagePath) &&
+            Path.IsPathRooted(monitorSettings.ImagePath))
+        {
+            var oldRoot = Path.GetFullPath(profile.FolderPath)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var oldImagePath = Path.GetFullPath(monitorSettings.ImagePath);
+            if (oldImagePath.StartsWith(oldRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                var relativeImagePath = Path.GetRelativePath(profile.FolderPath, oldImagePath);
+                monitorSettings.ImagePath = Path.Combine(newFolderPath, relativeImagePath);
+            }
+        }
+
         var idx = Profiles.IndexOf(profile);
         var renamed = new RecordProfile
         {
@@ -111,7 +127,9 @@ public class ProfileManager : IProfileManager
             CreatedAt = profile.CreatedAt,
             LoopCount = profile.LoopCount,
             PlaybackSpeed = profile.PlaybackSpeed,
-            PlaybackStartStep = 1
+            PlaybackStartStep = 1,
+            Mode = profile.Mode,
+            MonitorSettings = monitorSettings
         };
 
         SaveProfile(renamed);
@@ -130,7 +148,9 @@ public class ProfileManager : IProfileManager
         {
             LoopCount = Math.Max(0, profile.LoopCount),
             PlaybackSpeed = NormalizePlaybackSpeed(profile.PlaybackSpeed),
-            PlaybackStartStep = 1
+            PlaybackStartStep = 1,
+            Mode = profile.Mode,
+            MonitorSettings = PrepareMonitorSettingsForSave(profile)
         };
 
         var json = JsonSerializer.Serialize(metadata, JsonOptions);
@@ -356,6 +376,8 @@ public class ProfileManager : IProfileManager
         profile.LoopCount = 1;
         profile.PlaybackSpeed = 1.0;
         profile.PlaybackStartStep = 1;
+        profile.Mode = AutomationMode.Standard;
+        profile.MonitorSettings = new MonitorTriggerSettings();
 
         if (!File.Exists(profile.ProfileFilePath))
             return;
@@ -367,13 +389,48 @@ public class ProfileManager : IProfileManager
             profile.LoopCount = Math.Max(0, metadata?.LoopCount ?? 1);
             profile.PlaybackSpeed = NormalizePlaybackSpeed(metadata?.PlaybackSpeed ?? 1.0);
             profile.PlaybackStartStep = 1;
+            profile.Mode = metadata?.Mode ?? AutomationMode.Standard;
+            profile.MonitorSettings = PrepareLoadedMonitorSettings(
+                profile,
+                metadata?.MonitorSettings ?? new MonitorTriggerSettings());
         }
         catch
         {
             profile.LoopCount = 1;
             profile.PlaybackSpeed = 1.0;
             profile.PlaybackStartStep = 1;
+            profile.Mode = AutomationMode.Standard;
+            profile.MonitorSettings = new MonitorTriggerSettings();
         }
+    }
+
+    private static MonitorTriggerSettings PrepareMonitorSettingsForSave(RecordProfile profile)
+    {
+        var settings = profile.MonitorSettings.Clone();
+        settings.Normalize();
+
+        if (string.IsNullOrWhiteSpace(settings.ImagePath) || !Path.IsPathRooted(settings.ImagePath))
+            return settings;
+
+        var profileRoot = Path.GetFullPath(profile.FolderPath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var imagePath = Path.GetFullPath(settings.ImagePath);
+        if (imagePath.StartsWith(profileRoot, StringComparison.OrdinalIgnoreCase))
+            settings.ImagePath = Path.GetRelativePath(profile.FolderPath, imagePath);
+
+        return settings;
+    }
+
+    private static MonitorTriggerSettings PrepareLoadedMonitorSettings(
+        RecordProfile profile,
+        MonitorTriggerSettings settings)
+    {
+        var loaded = settings.Clone();
+        loaded.Normalize();
+        if (!string.IsNullOrWhiteSpace(loaded.ImagePath) && !Path.IsPathRooted(loaded.ImagePath))
+            loaded.ImagePath = Path.Combine(profile.FolderPath, loaded.ImagePath);
+
+        return loaded;
     }
 
     private static string NormalizeProfileName(string name)

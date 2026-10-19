@@ -22,6 +22,7 @@ public partial class MainViewModel : ObservableObject
     private readonly IPlaybackService _playbackService;
     private readonly IHotkeyService _hotkeyService;
     private readonly IRunLogger _logger;
+    private readonly IMonitorTriggerService _monitorTriggerService;
     private ScheduledTaskSettings _scheduleSettings;
     private readonly DispatcherTimer _scheduleTimer;
     private bool _scheduleTickRunning;
@@ -34,6 +35,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private RecordProfile? _selectedProfile;
+
+    [ObservableProperty]
+    private bool _isWelcomeVisible = true;
 
     [ObservableProperty]
     private string _statusText = "就绪";
@@ -72,6 +76,12 @@ public partial class MainViewModel : ObservableObject
     private bool _isPlaying;
 
     [ObservableProperty]
+    private bool _isMonitoring;
+
+    [ObservableProperty]
+    private string _monitorStatusText = "监控尚未启动";
+
+    [ObservableProperty]
     private int _loopCount = 1;
 
     [ObservableProperty]
@@ -97,6 +107,28 @@ public partial class MainViewModel : ObservableObject
     public string PauseButtonText => IsPaused ? "继续" : "暂停";
     public string PlaybackButtonText => IsPlaying ? "停止播放" : "开始播放";
     public bool ShowPauseButton => IsRecording || IsPlaying;
+    public bool IsWorkspaceVisible => !IsWelcomeVisible;
+    public string SelectedProfileModeText => SelectedProfile?.Mode == AutomationMode.Monitor
+        ? "监控任务"
+        : "普通脚本";
+    public string SelectedProfileModeDescription => SelectedProfile?.Mode == AutomationMode.Monitor
+        ? "看到指定内容后自动启动"
+        : "手动、快捷键或定时启动";
+    public bool IsMonitorProfile => SelectedProfile?.Mode == AutomationMode.Monitor;
+    public string MonitorButtonText => IsMonitoring ? "停止监控" : "开始监控";
+    public string MonitorSettingsSummary
+    {
+        get
+        {
+            if (!IsMonitorProfile || SelectedProfile is null)
+                return "";
+
+            var settings = SelectedProfile.MonitorSettings;
+            return settings.IsConfigured
+                ? $"{settings.TriggerTypeText}：{settings.TargetText}\n{settings.RegionText}"
+                : "尚未设置监控目标";
+        }
+    }
     public event EventHandler? MiniModeRequested;
 
     public MainViewModel(
@@ -105,6 +137,7 @@ public partial class MainViewModel : ObservableObject
         IPlaybackService playbackService,
         IHotkeyService hotkeyService,
         IRunLogger logger,
+        IMonitorTriggerService monitorTriggerService,
         ActionListViewModel actionListVm,
         VariableEditorViewModel variableEditorVm)
     {
@@ -113,6 +146,7 @@ public partial class MainViewModel : ObservableObject
         _playbackService = playbackService;
         _hotkeyService = hotkeyService;
         _logger = logger;
+        _monitorTriggerService = monitorTriggerService;
         ActionListVm = actionListVm;
         VariableEditorVm = variableEditorVm;
         ActionListVm.StartPlaybackFromStepRequested += (_, stepNumber) =>
@@ -133,6 +167,8 @@ public partial class MainViewModel : ObservableObject
         _playbackService.DelayChanged += OnPlaybackDelayChanged;
         _playbackService.LoopChanged += (_, _) =>
             Application.Current.Dispatcher.BeginInvoke(UpdateStatus);
+        _monitorTriggerService.StatusChanged += OnMonitorStatusChanged;
+        _monitorTriggerService.Triggered += OnMonitorTriggered;
 
         // 绑定热键事件（用 BeginInvoke 异步派发，避免阻塞钩子线程导致卡顿）
         _hotkeyService.RecordHotkeyPressed += (_, _) =>
@@ -184,6 +220,12 @@ public partial class MainViewModel : ObservableObject
         UpdateStatus();
     }
 
+    partial void OnIsMonitoringChanged(bool value)
+    {
+        OnPropertyChanged(nameof(MonitorButtonText));
+        UpdateStatus();
+    }
+
     private void UpdateStatus()
     {
         if (IsRecording && IsPaused)
@@ -192,6 +234,8 @@ public partial class MainViewModel : ObservableObject
             StatusText = "录制中...";
         else if (IsPlaying)
             StatusText = $"播放中 (第{_playbackService.CurrentLoop}轮, {PlaybackSpeed:0.##}x)...";
+        else if (IsMonitoring)
+            StatusText = MonitorStatusText;
         else
             StatusText = "就绪";
     }
@@ -235,8 +279,24 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    partial void OnIsWelcomeVisibleChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsWorkspaceVisible));
+    }
+
     partial void OnSelectedProfileChanged(RecordProfile? value)
     {
+        OnPropertyChanged(nameof(SelectedProfileModeText));
+        OnPropertyChanged(nameof(SelectedProfileModeDescription));
+        OnPropertyChanged(nameof(IsMonitorProfile));
+        OnPropertyChanged(nameof(MonitorSettingsSummary));
+
+        if (_monitorTriggerService.IsRunning &&
+            !ReferenceEquals(_monitorTriggerService.ActiveProfile, value))
+        {
+            _ = StopMonitoringAsync();
+        }
+
         if (value is null)
         {
             if (LoopCount != 1)
@@ -266,6 +326,57 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void NewProfile()
     {
+        CreateProfile(AutomationMode.Standard);
+    }
+
+    [RelayCommand]
+    private void CreateStandardProfile()
+    {
+        CreateProfile(AutomationMode.Standard);
+    }
+
+    [RelayCommand]
+    private void CreateMonitorProfile()
+    {
+        CreateProfile(AutomationMode.Monitor);
+    }
+
+    [RelayCommand]
+    private void OpenWorkspace()
+    {
+        SelectedProfile ??= Profiles.FirstOrDefault();
+        if (SelectedProfile is null)
+        {
+            System.Windows.MessageBox.Show(
+                "目前还没有任务，请先创建一个普通脚本或监控任务。",
+                "打开已有任务",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        IsWelcomeVisible = false;
+    }
+
+    [RelayCommand]
+    private void ShowWelcome()
+    {
+        if (IsRecording || IsPlaying)
+        {
+            System.Windows.MessageBox.Show(
+                "请先停止录制或回放，再返回首页。",
+                "返回首页",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        SaveCurrentProfileData();
+        IsWelcomeVisible = true;
+    }
+
+    private void CreateProfile(AutomationMode mode)
+    {
         var dialog = new Views.NewProfileDialog
         {
             Owner = Application.Current.MainWindow
@@ -279,14 +390,161 @@ public partial class MainViewModel : ObservableObject
         try
         {
             var profile = _profileManager.CreateProfile(name);
+            profile.Mode = mode;
+            _profileManager.SaveProfile(profile);
             Profiles = _profileManager.Profiles;
             SelectedProfile = profile;
+            IsWelcomeVisible = false;
+            if (mode == AutomationMode.Monitor)
+                OpenMonitorSettingsDialog();
         }
         catch (Exception ex)
         {
             System.Windows.MessageBox.Show(ex.Message, "新建方案失败",
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
         }
+    }
+
+    [RelayCommand]
+    private async Task OpenMonitorSettings()
+    {
+        if (!IsMonitorProfile || SelectedProfile is null)
+            return;
+
+        if (IsMonitoring)
+            await StopMonitoringAsync();
+
+        OpenMonitorSettingsDialog();
+    }
+
+    private void OpenMonitorSettingsDialog()
+    {
+        if (!IsMonitorProfile || SelectedProfile is null)
+            return;
+
+        var dialog = new Views.MonitorSettingsDialog(
+            SelectedProfile.MonitorSettings,
+            _monitorTriggerService)
+        {
+            Owner = Application.Current.MainWindow
+        };
+
+        if (dialog.ShowDialog() != true || dialog.Result is null)
+            return;
+
+        try
+        {
+            var settings = dialog.Result;
+            if (settings.TriggerType == MonitorTriggerType.Image)
+                settings.ImagePath = CopyMonitorImageToProfile(SelectedProfile, settings.ImagePath);
+
+            settings.Normalize();
+            SelectedProfile.MonitorSettings = settings;
+            _profileManager.SaveProfile(SelectedProfile);
+            OnPropertyChanged(nameof(MonitorSettingsSummary));
+            MonitorStatusText = "监控设置已保存，完成动作后即可开始监控";
+            UpdateStatus();
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show(
+                ex.Message,
+                "保存监控设置失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
+    }
+
+    private static string CopyMonitorImageToProfile(RecordProfile profile, string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+            throw new InvalidOperationException("目标图片不存在，请重新选择。");
+
+        Directory.CreateDirectory(profile.FolderPath);
+        var destination = Path.Combine(profile.FolderPath, "monitor-trigger.png");
+        if (string.Equals(Path.GetFullPath(sourcePath), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase))
+            return destination;
+
+        using var source = new System.Drawing.Bitmap(sourcePath);
+        source.Save(destination, System.Drawing.Imaging.ImageFormat.Png);
+        return destination;
+    }
+
+    [RelayCommand]
+    private async Task ToggleMonitoring()
+    {
+        if (IsMonitoring)
+        {
+            await StopMonitoringAsync();
+            return;
+        }
+
+        if (!IsMonitorProfile || SelectedProfile is null)
+        {
+            System.Windows.MessageBox.Show(
+                "当前是普通脚本，不能开启画面监控。请返回首页并创建“监控任务”，或者切换到已有的监控任务。",
+                "请选择监控任务",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        if (!SelectedProfile.MonitorSettings.IsConfigured)
+        {
+            System.Windows.MessageBox.Show(
+                "请先完成第一步：设置要监控的图片、文字或窗口。",
+                "监控任务尚未配置",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            OpenMonitorSettingsDialog();
+            return;
+        }
+
+        if (ActionListVm.Actions.Count == 0)
+        {
+            System.Windows.MessageBox.Show(
+                "请先完成第二步：录制或添加识别成功后要执行的动作。",
+                "脚本动作为空",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        if (IsRecording || IsPlaying)
+        {
+            System.Windows.MessageBox.Show(
+                "请先停止录制或回放，再开启监控。",
+                "暂时无法开始监控",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
+        SaveCurrentProfileData();
+        try
+        {
+            await _monitorTriggerService.StartAsync(SelectedProfile);
+            IsMonitoring = true;
+            MonitorStatusText = $"正在监控：{SelectedProfile.MonitorSettings.TargetText}";
+            UpdateStatus();
+        }
+        catch (Exception ex)
+        {
+            IsMonitoring = false;
+            System.Windows.MessageBox.Show(
+                ex.Message,
+                "开始监控失败",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Error);
+        }
+    }
+
+    private async Task StopMonitoringAsync()
+    {
+        await _monitorTriggerService.StopAsync();
+        IsMonitoring = false;
+        MonitorStatusText = "监控已停止";
+        UpdateStatus();
     }
 
     [RelayCommand]
@@ -459,6 +717,7 @@ public partial class MainViewModel : ObservableObject
             _profileManager.ImportGlobalConfig(dialog.FileName);
             Profiles = _profileManager.Profiles;
             SelectedProfile = Profiles.FirstOrDefault(p => p.Name == selectedName) ?? Profiles.FirstOrDefault();
+            IsWelcomeVisible = SelectedProfile is null;
             _hotkeyService.ReloadSettings();
             RefreshHotkeyTexts();
             ReloadScheduleSettings();
@@ -488,6 +747,16 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void ToggleRecording()
     {
+        if (IsMonitoring)
+        {
+            System.Windows.MessageBox.Show(
+                "请先停止监控，再开始录制。",
+                "监控正在运行",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
+
         if (IsPlaying) return;
         if (ActionListVm.IsInsertRecordingDialogOpen)
         {
@@ -614,6 +883,16 @@ public partial class MainViewModel : ObservableObject
     private async Task TogglePlayback()
     {
         if (IsRecording) return;
+
+        if (IsMonitoring && !IsPlaying)
+        {
+            System.Windows.MessageBox.Show(
+                "监控运行时会自动触发脚本。如需手动测试，请先停止监控。",
+                "监控正在运行",
+                System.Windows.MessageBoxButton.OK,
+                System.Windows.MessageBoxImage.Information);
+            return;
+        }
 
         if (IsPlaying)
         {
@@ -760,9 +1039,9 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        if (IsRecording || IsPlaying)
+        if (IsRecording || IsPlaying || IsMonitoring)
         {
-            _logger.Warn("Schedule", $"软件正在录制或播放，定时任务已跳过: {profile.Name}");
+            _logger.Warn("Schedule", $"软件正在录制、播放或监控，定时任务已跳过: {profile.Name}");
             StatusText = $"定时任务已跳过: {profile.Name}";
             return;
         }
@@ -905,6 +1184,10 @@ public partial class MainViewModel : ObservableObject
         {
             _playbackService.StopPlayback();
         }
+        if (IsMonitoring)
+        {
+            _ = StopMonitoringAsync();
+        }
     }
 
     private void OnEventRecorded(object? sender, InputEvent e)
@@ -926,8 +1209,67 @@ public partial class MainViewModel : ObservableObject
             IsPaused = false;
             ResetPlaybackStartStep();
             SetCurrentStepWaiting("等待任务", "就绪");
-            UpdateScheduleCountdown(DateTime.Now);
+            if (IsMonitoring)
+                UpdateStatus();
+            else
+                UpdateScheduleCountdown(DateTime.Now);
         });
+    }
+
+    private void OnMonitorStatusChanged(object? sender, MonitorStatusChangedEventArgs e)
+    {
+        Application.Current.Dispatcher.BeginInvoke(() =>
+        {
+            MonitorStatusText = e.Status;
+            if (e.Status.StartsWith("监控异常", StringComparison.Ordinal) &&
+                !_monitorTriggerService.IsRunning)
+            {
+                IsMonitoring = false;
+            }
+            if (IsMonitoring && !IsPlaying && !IsRecording)
+                StatusText = e.Status;
+        });
+    }
+
+    private void OnMonitorTriggered(object? sender, MonitorTriggeredEventArgs e)
+    {
+        Application.Current.Dispatcher.BeginInvoke(async () =>
+        {
+            await HandleMonitorTriggeredAsync(e);
+        });
+    }
+
+    private async Task HandleMonitorTriggeredAsync(MonitorTriggeredEventArgs e)
+    {
+        if (!IsMonitoring || IsRecording || IsPlaying)
+            return;
+
+        _monitorTriggerService.SetSuspended(true);
+        try
+        {
+            if (!ReferenceEquals(SelectedProfile, e.Profile))
+                SelectedProfile = e.Profile;
+
+            if (ActionListVm.Actions.Count == 0)
+            {
+                MonitorStatusText = "识别成功，但脚本没有动作";
+                _logger.Warn("Monitor", $"监控触发后没有可执行动作: {e.Profile.Name}");
+                return;
+            }
+
+            MonitorStatusText = "识别成功，正在执行脚本";
+            await StartProfilePlaybackAsync(e.Profile, "识别成功，准备执行");
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Monitor", "识别触发脚本执行失败", ex, captureScreenshot: true);
+            MonitorStatusText = $"触发执行失败：{ex.Message}";
+        }
+        finally
+        {
+            if (IsMonitoring)
+                _monitorTriggerService.SetSuspended(false);
+        }
     }
 
     private void ResetPlaybackStartStep()

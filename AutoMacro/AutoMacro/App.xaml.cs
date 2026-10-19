@@ -27,6 +27,7 @@ public partial class App : Application
             services.AddSingleton<IImageRecognitionService, ImageRecognitionService>();
             services.AddSingleton<IOcrService, WindowsOcrService>();
             services.AddSingleton<IApiClientService, ApiClientService>();
+            services.AddSingleton<IMonitorTriggerService, MonitorTriggerService>();
 
             // ViewModels
             services.AddSingleton<MainViewModel>();
@@ -66,6 +67,7 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException -= OnUnhandledException;
         TaskScheduler.UnobservedTaskException -= OnUnobservedTaskException;
 
+        await _host.Services.GetRequiredService<IMonitorTriggerService>().StopAsync();
         await _host.StopAsync();
         _host.Dispose();
         base.OnExit(e);

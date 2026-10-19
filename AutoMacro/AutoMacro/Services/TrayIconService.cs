@@ -7,7 +7,7 @@ using WinForms = System.Windows.Forms;
 namespace AutoMacro.Services;
 
 /// <summary>
-/// 系统托盘图标管理：空闲显示应用图标，录制显示红色，播放显示蓝色。
+/// 系统托盘图标管理：空闲显示应用图标，录制显示红色，播放显示蓝色，监控显示绿色。
 /// </summary>
 public class TrayIconService : IDisposable
 {
@@ -15,11 +15,13 @@ public class TrayIconService : IDisposable
     private readonly Icon _idleIcon;
     private readonly Icon _recordingIcon;
     private readonly Icon _playingIcon;
+    private readonly Icon _monitoringIcon;
 
     public event EventHandler? ShowWindowRequested;
     public event EventHandler? ExitRequested;
     public event EventHandler? ToggleRecordRequested;
     public event EventHandler? TogglePlaybackRequested;
+    public event EventHandler? ToggleMonitorRequested;
     public event EventHandler? StopRequested;
     public event EventHandler? MiniModeRequested;
 
@@ -28,6 +30,7 @@ public class TrayIconService : IDisposable
         _idleIcon = LoadAppIcon();
         _recordingIcon = CreateColorIcon(Color.FromArgb(244, 67, 54));   // 红色
         _playingIcon = CreateColorIcon(Color.FromArgb(33, 150, 243));    // 蓝色
+        _monitoringIcon = CreateColorIcon(Color.FromArgb(65, 190, 140)); // 绿色
 
         var contextMenu = new WinForms.ContextMenuStrip();
         contextMenu.Items.Add("显示主窗口", null, (_, _) => ShowWindowRequested?.Invoke(this, EventArgs.Empty));
@@ -35,6 +38,7 @@ public class TrayIconService : IDisposable
         contextMenu.Items.Add(new WinForms.ToolStripSeparator());
         contextMenu.Items.Add("录制", null, (_, _) => ToggleRecordRequested?.Invoke(this, EventArgs.Empty));
         contextMenu.Items.Add("播放", null, (_, _) => TogglePlaybackRequested?.Invoke(this, EventArgs.Empty));
+        contextMenu.Items.Add("开始/停止监控", null, (_, _) => ToggleMonitorRequested?.Invoke(this, EventArgs.Empty));
         contextMenu.Items.Add("停止", null, (_, _) => StopRequested?.Invoke(this, EventArgs.Empty));
         contextMenu.Items.Add(new WinForms.ToolStripSeparator());
         contextMenu.Items.Add("退出", null, (_, _) => ExitRequested?.Invoke(this, EventArgs.Empty));
@@ -42,7 +46,7 @@ public class TrayIconService : IDisposable
         _notifyIcon = new WinForms.NotifyIcon
         {
             Icon = _idleIcon,
-            Text = "全能脚本V2.2.2",
+            Text = "全能脚本V2.3.1",
             Visible = true,
             ContextMenuStrip = contextMenu
         };
@@ -50,22 +54,27 @@ public class TrayIconService : IDisposable
         _notifyIcon.DoubleClick += (_, _) => ShowWindowRequested?.Invoke(this, EventArgs.Empty);
     }
 
-    public void SetState(bool isRecording, bool isPlaying)
+    public void SetState(bool isRecording, bool isPlaying, bool isMonitoring)
     {
         if (isRecording)
         {
             _notifyIcon.Icon = _recordingIcon;
-            _notifyIcon.Text = "全能脚本V2.2.2 - 录制中";
+            _notifyIcon.Text = "全能脚本V2.3.1 - 录制中";
         }
         else if (isPlaying)
         {
             _notifyIcon.Icon = _playingIcon;
-            _notifyIcon.Text = "全能脚本V2.2.2 - 播放中";
+            _notifyIcon.Text = "全能脚本V2.3.1 - 播放中";
+        }
+        else if (isMonitoring)
+        {
+            _notifyIcon.Icon = _monitoringIcon;
+            _notifyIcon.Text = "全能脚本V2.3.1 - 监控中";
         }
         else
         {
             _notifyIcon.Icon = _idleIcon;
-            _notifyIcon.Text = "全能脚本V2.2.2";
+            _notifyIcon.Text = "全能脚本V2.3.1";
         }
     }
 
@@ -103,5 +112,6 @@ public class TrayIconService : IDisposable
         _idleIcon.Dispose();
         _recordingIcon.Dispose();
         _playingIcon.Dispose();
+        _monitoringIcon.Dispose();
     }
 }

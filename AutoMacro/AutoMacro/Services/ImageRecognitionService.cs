@@ -18,6 +18,10 @@ public class ImageRecognitionService : IImageRecognitionService
 
     private readonly IRunLogger _logger;
     private bool _openCvFallbackLogged;
+    private readonly object _templateCacheLock = new();
+    private string? _cachedTemplatePath;
+    private DateTime _cachedTemplateLastWrite;
+    private Bitmap? _cachedTemplate;
 
     public ImageRecognitionService(IRunLogger logger)
     {
@@ -107,6 +111,68 @@ public class ImageRecognitionService : IImageRecognitionService
         _logger.Warn("Image", $"等待图片超时: {Path.GetFileName(imagePath)}, bestScore={bestScore:0.000}, threshold={effectiveThreshold:0.000}, bestX={bestX}, bestY={bestY}");
         _logger.CaptureScreenshot($"ImageMiss_{Path.GetFileNameWithoutExtension(imagePath)}");
         return (false, bestX, bestY, bestScore);
+    }
+
+    public Task<(bool Found, int X, int Y, double Score)> FindImageOnceAsync(
+        string imagePath,
+        double threshold,
+        OcrRegion? region,
+        CancellationToken cancellationToken,
+        bool maskOwnWindows = true)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!File.Exists(imagePath))
+            return Task.FromResult((false, 0, 0, 0d));
+
+        try
+        {
+            using var template = LoadCachedTemplateClone(imagePath);
+            var capture = CaptureScreen(region, maskOwnWindows);
+            using var screen = capture.Bitmap;
+            var normalizedThreshold = Math.Clamp(threshold <= 0 ? 0.92 : threshold, 0.5, 1.0);
+            var isColorRichTemplate = IsColorRichIconTemplate(template);
+            var effectiveThreshold = GetEffectiveThreshold(normalizedThreshold, template, isColorRichTemplate);
+            var result = FindInBitmap(
+                screen,
+                template,
+                effectiveThreshold,
+                capture.Left,
+                capture.Top,
+                QuickTemplateScales,
+                isColorRichTemplate);
+            return Task.FromResult(result);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn("Monitor", $"静默识图失败: {ex.Message}");
+            return Task.FromResult((false, 0, 0, 0d));
+        }
+    }
+
+    private Bitmap LoadCachedTemplateClone(string imagePath)
+    {
+        var fullPath = Path.GetFullPath(imagePath);
+        var lastWrite = File.GetLastWriteTimeUtc(fullPath);
+
+        lock (_templateCacheLock)
+        {
+            if (_cachedTemplate is null ||
+                !string.Equals(_cachedTemplatePath, fullPath, StringComparison.OrdinalIgnoreCase) ||
+                _cachedTemplateLastWrite != lastWrite)
+            {
+                _cachedTemplate?.Dispose();
+                using var source = new Bitmap(fullPath);
+                _cachedTemplate = CloneAs24Bpp(source);
+                _cachedTemplatePath = fullPath;
+                _cachedTemplateLastWrite = lastWrite;
+            }
+
+            return CloneAs24Bpp(_cachedTemplate);
+        }
     }
 
     private static double[] GetTemplateScales(int timeoutMs)
@@ -211,13 +277,21 @@ public class ImageRecognitionService : IImageRecognitionService
         }
     }
 
-    private static ScreenCapture CaptureScreen()
+    private static ScreenCapture CaptureScreen(OcrRegion? region = null, bool maskOwnWindows = true)
     {
-        var bounds = WinForms.SystemInformation.VirtualScreen;
+        var virtualBounds = WinForms.SystemInformation.VirtualScreen;
+        var requested = region is { Width: > 0, Height: > 0 }
+            ? new Rectangle(region.X, region.Y, region.Width, region.Height)
+            : virtualBounds;
+        var bounds = Rectangle.Intersect(virtualBounds, requested);
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+            bounds = virtualBounds;
+
         var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format24bppRgb);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size);
-        MaskOwnWindows(graphics, bounds.Left, bounds.Top, bounds.Width, bounds.Height);
+        if (maskOwnWindows)
+            MaskOwnWindows(graphics, bounds.Left, bounds.Top, bounds.Width, bounds.Height);
         return new ScreenCapture(bitmap, bounds.Left, bounds.Top);
     }
 
